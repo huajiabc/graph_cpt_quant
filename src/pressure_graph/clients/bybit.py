@@ -250,6 +250,17 @@ class BybitClient(RestClient):
             ]
         ].dropna(subset=["timestamp", "price"]).sort_values("timestamp")
 
+    def orderbook(self, symbol: str, limit: int = 200) -> dict[str, Any]:
+        payload = self.get_json(
+            "/v5/market/orderbook",
+            {
+                "category": self.category,
+                "symbol": symbol,
+                "limit": int(limit),
+            },
+        )
+        return payload.get("result", {})
+
 
 def utc_now() -> pd.Timestamp:
     return pd.Timestamp(datetime.now(timezone.utc))

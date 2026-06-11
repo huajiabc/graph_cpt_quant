@@ -49,6 +49,8 @@ from pressure_graph.reports.v09a import write_v09a_cluster_impulse_graph
 from pressure_graph.reports.v09b import write_v09b_portfolio_ranking
 from pressure_graph.reports.v09b2 import write_v09b2_ranking_failure_attribution
 from pressure_graph.reports.v09c import write_v09c_orderflow_capacity_ranking
+from pressure_graph.reports.v09e import write_v09e_orderbook_capacity_ranking
+from pressure_graph.reports.v09e1 import V09E1Config, run_historical_orderbook_replay
 from pressure_graph.reports.v09d import write_v09d_cic_capacity_architecture
 from pressure_graph.reports.v09d1 import write_v09d1_burst_capacity_execution
 from pressure_graph.reports.v10_short_mirror import write_v10_short_mirror_failure
@@ -482,6 +484,21 @@ def run_v09b2_ranking_failure_attribution() -> dict[str, Path]:
 
 def run_v09c_orderflow_capacity_ranking() -> dict[str, Path]:
     return write_v09c_orderflow_capacity_ranking()
+
+
+def run_v09e_orderbook_capacity_ranking() -> dict[str, Path]:
+    return write_v09e_orderbook_capacity_ranking()
+
+
+def run_v09e1_historical_orderbook_replay(
+    *,
+    max_files: int | None = None,
+    download: bool = True,
+    run_ranking: bool = True,
+) -> dict[str, Path]:
+    return run_historical_orderbook_replay(
+        V09E1Config(max_files=max_files, download=download, run_ranking=run_ranking)
+    )
 
 
 def run_v09d_cic_capacity_architecture_from_features(config: ExperimentConfig) -> dict[str, Path]:

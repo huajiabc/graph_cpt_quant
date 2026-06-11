@@ -16,14 +16,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
-import pytest
 
 from pressure_graph.reports.v10_short_mirror import (
     CANDIDATES,
     ShortCandidate,
-    add_short_mirror_columns,
     simulate_short_candidate,
 )
 

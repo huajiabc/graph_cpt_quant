@@ -46,6 +46,8 @@ from pressure_graph.pipeline import (
     run_v09b_portfolio_ranking_from_features,
     run_v09b2_ranking_failure_attribution,
     run_v09c_orderflow_capacity_ranking,
+    run_v09e_orderbook_capacity_ranking,
+    run_v09e1_historical_orderbook_replay,
     run_v09d_cic_capacity_architecture_from_features,
     run_v09d1_burst_capacity_execution_from_features,
     run_v10_short_mirror_failure_from_features,
@@ -54,6 +56,7 @@ from pressure_graph.pipeline import (
 from pressure_graph.reports.v06a1 import load_v06a1_config
 from pressure_graph.reports.v06a2 import load_v06a2_config
 from pressure_graph.orderflow import OrderflowRunConfig, write_v08_orderflow_shadow
+from pressure_graph.orderbook import OrderbookRunConfig, write_v085_orderbook_snapshot
 
 
 app = typer.Typer(help="Crypto Pressure Graph v0 experiment CLI")
@@ -576,6 +579,43 @@ def run_v08_orderflow_shadow(
         typer.echo(f"{name}: {path}")
 
 
+@app.command("run-v085-orderbook-snapshot")
+def run_v085_orderbook_snapshot(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+    report_root: Path = typer.Option(
+        Path("reports/v0_8_5_orderbook_snapshot"), help="Output report directory."
+    ),
+    orderbook_root: Path = typer.Option(
+        Path("data/orderbook/v0_8_5/bybit"), help="Raw and feature orderbook cache directory."
+    ),
+    demand_queue_path: Path = typer.Option(
+        Path("data/orderflow/demand_queue.parquet"), help="Event-driven orderflow demand queue."
+    ),
+    live_feature_path: Path = typer.Option(
+        Path("data/live_v07d2/processed/v0_7d2_live_features.parquet"),
+        help="Latest v0.7D.2 live feature table for selecting TopN fallback symbols.",
+    ),
+    top_n: int = typer.Option(50, help="Dynamic universe TopN fallback."),
+    max_symbols: int = typer.Option(10, help="Optional symbol cap. Use 0 for all selected symbols."),
+    depth_limit: int = typer.Option(200, help="Bybit orderbook depth limit."),
+    retain_days: int = typer.Option(7, help="Days to retain in local snapshot cache."),
+) -> None:
+    cfg = load_config(config)
+    run_cfg = OrderbookRunConfig(
+        report_root=report_root,
+        orderbook_root=orderbook_root,
+        demand_queue_path=demand_queue_path,
+        live_feature_path=live_feature_path,
+        top_n=top_n,
+        max_symbols=None if max_symbols == 0 else max_symbols,
+        depth_limit=depth_limit,
+        retain_days=retain_days,
+    )
+    outputs = write_v085_orderbook_snapshot(cfg, run_cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
 @app.command("run-v09a")
 def run_v09a(
     config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
@@ -606,6 +646,39 @@ def run_v09b2() -> None:
 @app.command("run-v09c")
 def run_v09c() -> None:
     outputs = run_v09c_orderflow_capacity_ranking()
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v09e")
+def run_v09e() -> None:
+    outputs = run_v09e_orderbook_capacity_ranking()
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v09e1")
+def run_v09e1(
+    max_files: int | None = typer.Option(
+        None,
+        help="Optional cap on symbol-day orderbook files to download/replay.",
+    ),
+    download: bool = typer.Option(
+        True,
+        "--download/--no-download",
+        help="Download missing Bybit historical orderbook files before replay.",
+    ),
+    run_ranking: bool = typer.Option(
+        True,
+        "--run-ranking/--no-ranking",
+        help="Run v0.9E ranking after historical replay features are written.",
+    ),
+) -> None:
+    outputs = run_v09e1_historical_orderbook_replay(
+        max_files=max_files,
+        download=download,
+        run_ranking=run_ranking,
+    )
     for name, path in outputs.items():
         typer.echo(f"{name}: {path}")
 
