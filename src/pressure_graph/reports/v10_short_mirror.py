@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -141,6 +142,42 @@ def _vol_regime_rule(row: pd.Series) -> ExecutionRule:
     if vol_pct < 80:
         return ExecutionRule(tp=0.04, sl=0.025, max_hold_bars=16)
     return ExecutionRule(tp=0.05, sl=0.03, max_hold_bars=16)
+
+
+def _vol_regime_rule_short(row: pd.Series) -> ExecutionRule:
+    """Asymmetric SL/TP profile for short side.
+
+    Shorts have a hard ceiling on profit (-100%) and unbounded loss risk on
+    short-squeeze, so the short profile uses a tighter SL than the long
+    mirror. Calibration (low/mid/high vol):
+        low  vol_pct < 40 -> tp=0.025 sl=0.015
+        mid  vol_pct < 80 -> tp=0.035 sl=0.020
+        high vol_pct >=80 -> tp=0.045 sl=0.025
+    """
+    vol_pct = pd.to_numeric(row.get("symbol_volatility_percentile"), errors="coerce")
+    if pd.isna(vol_pct) or vol_pct < 40:
+        return ExecutionRule(tp=0.025, sl=0.015, max_hold_bars=16)
+    if vol_pct < 80:
+        return ExecutionRule(tp=0.035, sl=0.020, max_hold_bars=16)
+    return ExecutionRule(tp=0.045, sl=0.025, max_hold_bars=16)
+
+
+# Threshold below which an 8-hour funding rate is "too negative" for a short
+# (i.e. shorts are crowded and paying longs). -0.03%/8h ~= -32% annualized.
+FUNDING_SHORT_BLOCK_THRESHOLD = -0.0003
+
+
+def _funding_block_short(row: pd.Series) -> bool:
+    """Block a short entry when 8-hour funding is below FUNDING_SHORT_BLOCK_THRESHOLD.
+
+    Fail-open semantics: missing funding data (NaN / not in row) returns False
+    so we do not silently block entries when the data feed is incomplete.
+    Callers can compose stricter funding policies on top.
+    """
+    funding = pd.to_numeric(row.get("funding_rate_settled"), errors="coerce")
+    if pd.isna(funding):
+        return False
+    return bool(funding < FUNDING_SHORT_BLOCK_THRESHOLD)
 
 
 def add_short_mirror_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -325,7 +362,26 @@ def _short_exit(
     }
 
 
-def simulate_short_candidate(data: pd.DataFrame, candidate: ShortCandidate) -> pd.DataFrame:
+def simulate_short_candidate(
+    data: pd.DataFrame,
+    candidate: ShortCandidate,
+    *,
+    rule_factory: Callable[[pd.Series], ExecutionRule] | None = None,
+    funding_blocker: Callable[[pd.Series], bool] | None = None,
+) -> pd.DataFrame:
+    """Simulate fills for ``candidate`` over ``data``.
+
+    Parameters
+    ----------
+    rule_factory:
+        Optional override for the per-entry execution rule. Defaults to
+        ``_vol_regime_rule`` (symmetric long-mirror). For S2 paper-live use
+        ``_vol_regime_rule_short`` to apply the asymmetric short profile.
+    funding_blocker:
+        Optional callable that receives the entry-bar row and returns True to
+        skip the entry. None means no funding check.
+    """
+    pick_rule = rule_factory or _vol_regime_rule
     rows: list[dict[str, object]] = []
     sort_cols = ["exchange", "symbol", "bar_open_time"]
     for _, group in data.sort_values(sort_cols).groupby(["exchange", "symbol"], sort=False, observed=True):
@@ -345,12 +401,15 @@ def simulate_short_candidate(data: pd.DataFrame, candidate: ShortCandidate) -> p
             entry_idx, entry_price, entry_reason = entry
             if not np.isfinite(entry_price) or entry_price <= 0:
                 continue
-            entry_gate = bool(group.iloc[entry_idx].get(candidate.gate_col, False))
+            entry_row = group.iloc[entry_idx]
+            entry_gate = bool(entry_row.get(candidate.gate_col, False))
             if candidate.strict_entry_gate and not entry_gate:
                 continue
             if candidate.require_gate_lost_at_entry and entry_gate:
                 continue
-            rule = _vol_regime_rule(group.iloc[entry_idx])
+            if funding_blocker is not None and funding_blocker(entry_row):
+                continue
+            rule = pick_rule(entry_row)
             exit_data = _short_exit(group, entry_idx, entry_price, rule)
             active_until = int(exit_data["exit_idx"])
             gross = float(exit_data["gross_return"])

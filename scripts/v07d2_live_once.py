@@ -12,8 +12,10 @@ from pressure_graph.io import raw_path, read_parquet, write_parquet
 from pressure_graph.paper_live.v07d2 import (
     PAPER_DATA_ROOT,
     REPORT_ROOT,
+    S2_PAPER_LIVE_ROOT,
     add_v07d2_live_columns,
     write_v07d2_outputs,
+    write_v07d2_s2_paper_live,
 )
 from pressure_graph.reports.v03 import _add_v03_report_columns
 from pressure_graph.reports.v04 import RANK30_COL, RANK90_COL
@@ -100,6 +102,10 @@ def main() -> None:
     outputs = write_v07d2_outputs(prepared, paper_config, args.signal_days, REPORT_ROOT, PAPER_DATA_ROOT)
     for name, path in outputs.items():
         print(f"{name}: {path}")
+
+    s2_outputs = write_v07d2_s2_paper_live(prepared, args.signal_days, S2_PAPER_LIVE_ROOT)
+    for name, path in s2_outputs.items():
+        print(f"s2.{name}: {path}")
 
 
 if __name__ == "__main__":

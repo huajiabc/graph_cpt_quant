@@ -657,9 +657,130 @@ def write_v07d2_cic_mir1_paper_live(
     return write_v07d2_outputs(prepared, config, signal_days, report_root, paper_data_root)
 
 
+S2_PAPER_LIVE_CANDIDATES = (
+    "S2_FAIL_CIC2_BREAK_LOW",
+    "S2_FAIL_CIC2_NO_RECLAIM_BREAK_LOW",
+)
+
+
+S2_PAPER_LIVE_ROOT = Path("reports/v1_0_short_paper_live")
+
+
+def write_v07d2_s2_paper_live(
+    prepared: pd.DataFrame,
+    signal_days: int = 7,
+    report_root: Path | str | None = None,
+) -> dict[str, Path]:
+    """Roll v10 S2 long-failure-to-short candidates as a paper-live shadow.
+
+    P0b contract:
+    - Reuses ``simulate_short_candidate`` with the asymmetric short rule and
+      the funding blocker (rejects entries when funding is too negative).
+    - Filters trades to the latest ``signal_days`` window for status reporting.
+    - Writes ``s2_candidate_summary.csv``, ``s2_paper_trades.parquet`` and an
+      ``s2_current_status.md`` summary so the existing v07d2 primary status
+      file is left untouched.
+    """
+    from pressure_graph.reports.v10_short_mirror import (
+        CANDIDATES,
+        _funding_block_short,
+        _vol_regime_rule_short,
+        add_short_mirror_columns,
+        simulate_short_candidate,
+    )
+
+    if report_root is None:
+        root = S2_PAPER_LIVE_ROOT
+    else:
+        root = Path(report_root)
+    root.mkdir(parents=True, exist_ok=True)
+
+    data = add_short_mirror_columns(prepared)
+    latest = pd.to_datetime(data.get("feature_time"), utc=True, errors="coerce").max()
+    signal_start = (
+        latest - pd.Timedelta(days=signal_days) if pd.notna(latest) else None
+    )
+
+    s2_candidates = [c for c in CANDIDATES if c.candidate in S2_PAPER_LIVE_CANDIDATES]
+    frames: list[pd.DataFrame] = []
+    for candidate in s2_candidates:
+        frames.append(
+            simulate_short_candidate(
+                data,
+                candidate,
+                rule_factory=_vol_regime_rule_short,
+                funding_blocker=_funding_block_short,
+            )
+        )
+    trades = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    if not trades.empty and signal_start is not None:
+        trades = trades[
+            pd.to_datetime(trades["signal_time"], utc=True, errors="coerce") >= signal_start
+        ].copy()
+
+    summary_rows: list[dict[str, object]] = []
+    for candidate in s2_candidates:
+        cand_trades = (
+            trades[trades["candidate"].eq(candidate.candidate)]
+            if not trades.empty
+            else trades
+        )
+        n_trades = int(len(cand_trades))
+        net20_series = pd.to_numeric(cand_trades.get("net20", pd.Series(dtype=float)), errors="coerce")
+        sample_status, evaluation_status = _sample_status(n_trades)
+        summary_rows.append(
+            {
+                "candidate": candidate.candidate,
+                "family": candidate.family,
+                "trades": n_trades,
+                "net20": _safe_float(net20_series.mean()),
+                "tp_rate": _safe_float(
+                    (cand_trades.get("exit_reason", pd.Series(dtype=str)).astype(str).str.startswith("tp")).mean()
+                )
+                if n_trades
+                else np.nan,
+                "sample_status": sample_status,
+                "evaluation_status": evaluation_status,
+            }
+        )
+    summary = pd.DataFrame(summary_rows)
+
+    outputs = {
+        "candidate_summary": root / "s2_candidate_summary.csv",
+        "paper_trades": root / "s2_paper_trades.parquet",
+        "current_status": root / "s2_current_status.md",
+    }
+    summary.to_csv(outputs["candidate_summary"], index=False)
+    if trades.empty:
+        pd.DataFrame().to_parquet(outputs["paper_trades"], index=False)
+    else:
+        trades.to_parquet(outputs["paper_trades"], index=False)
+
+    lines = [
+        "# v1.0 S2 long-failure paper-live shadow",
+        "",
+        f"- latest_feature_time: {latest}",
+        f"- signal_days: {signal_days}",
+        f"- candidates: {len(s2_candidates)}",
+        f"- total_trades: {int(len(trades))}",
+        "",
+        "## Candidates",
+    ]
+    for row in summary.itertuples(index=False):
+        net20_text = "n/a" if pd.isna(row.net20) else f"{float(row.net20):.4%}"
+        lines.append(
+            f"- {row.candidate}: trades={int(row.trades)}, net20={net20_text}, "
+            f"sample_status={row.sample_status}"
+        )
+    outputs["current_status"].write_text("\n".join(lines), encoding="utf-8")
+    return outputs
+
+
 __all__ = [
     "PAPER_DATA_ROOT",
     "REPORT_ROOT",
+    "S2_PAPER_LIVE_CANDIDATES",
+    "S2_PAPER_LIVE_ROOT",
     "add_v07d2_live_columns",
     "build_v07d2_paper_ledger",
     "mir1_cic_overlap_live",
@@ -667,4 +788,5 @@ __all__ = [
     "prepare_v07d2_features_from_history",
     "write_v07d2_cic_mir1_paper_live",
     "write_v07d2_outputs",
+    "write_v07d2_s2_paper_live",
 ]
