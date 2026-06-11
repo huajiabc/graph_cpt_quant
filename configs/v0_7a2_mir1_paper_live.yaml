@@ -1,0 +1,139 @@
+experiment:
+  name: v0_7a2_mir1_paper_live
+  mode: paper_live
+  strategy_id: mir1_market_impulse_reclaim_primary
+  primary_candidate: MIR1
+  timezone: UTC
+  base_interval: 15m
+  frozen: true
+  paper_live_allowed: true
+  real_live_allowed: false
+  tick_validation_status: pending
+  historical_validation_status: v0_7a1_passed
+  candidate_rating: B- graph-context paper-live candidate
+
+exchange:
+  name: bybit
+  market: linear_usdt_perp
+
+market_graph:
+  density_threshold: 0.10
+  low_density_threshold: 0.02
+  strict_signal_and_entry_gate: true
+
+signal:
+  anchor: bullish_volume_shock
+  volume_z_4h_min: 2.0
+  ret_4h_min: 0.0
+  cooldown_bars: 16
+  frozen: true
+
+candidates:
+  - candidate: MIR1
+    role: primary
+    universe_top_n: 50
+    market_gate: market_volume_impulse_density_high
+    event_col: bullish_volume_shock_event
+    entry_policy: reclaim
+    pullback_pct: 0.010
+    valid_bars: 8
+    execution_rule: vol_regime_fast
+    rationale: Top50 market impulse density high plus local bullish volume shock plus 1pct reclaim
+
+  - candidate: IR2_ref
+    role: reference
+    universe_top_n: 50
+    market_gate: market_btc_up
+    event_col: bullish_volume_shock_event
+    entry_policy: reclaim
+    pullback_pct: 0.010
+    valid_bars: 8
+    execution_rule: vol_regime_fast
+    rationale: Legacy Top50 BTC_up impulse reclaim reference
+
+  - candidate: LOW_VOLUME_DENSITY_NEG
+    role: negative_control
+    universe_top_n: 50
+    market_gate: market_low_volume_impulse_density
+    event_col: bullish_volume_shock_event
+    entry_policy: reclaim
+    pullback_pct: 0.010
+    valid_bars: 8
+    execution_rule: vol_regime_fast
+    rationale: Low market volume impulse density negative control
+
+  - candidate: BTC_CHOP_NEG
+    role: negative_control
+    universe_top_n: 50
+    market_gate: market_btc_chop
+    event_col: bullish_volume_shock_event
+    entry_policy: reclaim
+    pullback_pct: 0.010
+    valid_bars: 8
+    execution_rule: vol_regime_fast
+    rationale: BTC_chop negative control for same local motif
+
+baselines:
+  enabled: true
+  items:
+    - baseline: entry_only_reclaim
+      candidate: MIR1
+      market_gate: market_volume_impulse_density_high
+      event_col: neutral_volume_event
+      entry_policy: reclaim
+      pullback_pct: 0.010
+      valid_bars: 8
+      execution_rule: vol_regime_fast
+
+    - baseline: matched_random_reclaim
+      candidate: MIR1
+      market_gate: market_volume_impulse_density_high
+      event_col: matched_random_event
+      entry_policy: reclaim
+      pullback_pct: 0.010
+      valid_bars: 8
+      execution_rule: vol_regime_fast
+
+    - baseline: volume_shock_next_open
+      candidate: MIR1
+      market_gate: market_volume_impulse_density_high
+      event_col: bullish_volume_shock_event
+      entry_policy: next_open
+      pullback_pct: 0.010
+      valid_bars: 8
+      execution_rule: vol_regime_fast
+
+    - baseline: volume_shock_pullback_only
+      candidate: MIR1
+      market_gate: market_volume_impulse_density_high
+      event_col: bullish_volume_shock_event
+      entry_policy: pullback
+      pullback_pct: 0.010
+      valid_bars: 8
+      execution_rule: vol_regime_fast
+
+costs:
+  single_side_bps: [5, 10, 20, 30, 50]
+
+portfolio:
+  primary_max_positions: 3
+  shadow_max_positions: [1, 5, 10]
+  one_position_per_symbol: true
+  pyramiding: false
+  sizing: equal_notional
+  ranking:
+    - higher_trailing_30d_turnover
+    - earlier_armed_time
+    - symbol_lexicographic
+
+logging:
+  save_signals: true
+  save_trades: true
+  save_baselines: true
+  save_daily_summary: true
+
+stops:
+  stale_data_bars: 2
+  rolling_trade_window: 100
+  pause_if_rolling_10bp_net_lte_zero: true
+  pause_if_baseline_lift_lte_zero: true

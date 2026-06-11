@@ -1,0 +1,102 @@
+experiment:
+  name: v0
+  timezone: UTC
+  base_interval: 15m
+  feature_windows: [1h, 4h]
+  label_windows: [4h, 12h]
+  direction: long_only
+  start_days: 365
+
+paths:
+  data_root: data
+  report_root: reports/v0
+
+exchanges:
+  binance:
+    enabled: true
+    role: smoke_and_recent_oi_sanity
+    market: usdt_m_perp
+    base_url: https://fapi.binance.com
+    oi_max_history_days: 30
+
+  bybit:
+    enabled: true
+    role: main_12m_experiment
+    category: linear
+    settle_coin: USDT
+    base_url: https://api.bybit.com
+
+universe:
+  modes:
+    - static_current_top30
+    - dynamic_monthly_top30
+  top_n: 30
+  dynamic_lookback_days: 30
+  min_listing_age_days: 365
+  exclude_stablecoins: true
+  max_missing_ratio: 0.05
+
+timestamps:
+  primary_key_time: bar_open_time
+  feature_time: bar_close_time
+  entry_time: next_bar_open_time
+
+features:
+  rolling_window_days: 30
+  min_history_days: 14
+  percentile_method: current_vs_prior_window
+  funding_asof_max_age_intervals: 2
+  oi_value_usdt: true
+
+events:
+  deduplicate: true
+  cooldown_bars_4h: 16
+  cooldown_bars_12h: 48
+  one_position_per_symbol: true
+
+path_rules:
+  short_squeeze:
+    btc_ret_4h_min: -0.015
+    oi_percentile_grid: [70, 75, 80]
+    funding_percentile_grid: [50, 60, 70, 80, 90]
+    funding_z_max: 0.5
+    volume_z_grid: [0.8, 1.0, 1.2]
+
+  momentum_ignition:
+    btc_ret_4h_min: -0.015
+    ret_4h_percentile_min: 70
+    volume_z_grid: [0.8, 1.0, 1.2]
+    oi_percentile_min_grid: [60, 70]
+    oi_percentile_max: 95
+    funding_percentile_max_grid: [60, 70, 80]
+
+  crowded_long_risk:
+    funding_percentile_min: 90
+    oi_percentile_min: 75
+    ret_4h_percentile_max: 50
+    mode: veto_and_report
+
+execution:
+  entry: next_15m_open
+  ambiguity_policy: sl_first
+  ambiguity_policies: [sl_first, tp_first, skip]
+  cost_single_side_bps: [5, 10, 20]
+  rules:
+    fast:
+      tp: 0.03
+      sl: 0.02
+      max_hold_bars: 16
+    swing:
+      tp: 0.05
+      sl: 0.03
+      max_hold_bars: 48
+
+validation:
+  walk_forward: true
+  final_holdout_months: 3
+  report_bar_level: true
+  report_event_level: true
+  primary_level: event
+  max_symbol_contribution: 0.35
+  max_month_contribution: 0.35
+  sample_shrinkage_k: 100

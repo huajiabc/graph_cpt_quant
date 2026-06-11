@@ -1,0 +1,32 @@
+experiment:
+  name: v0_6a1_impulse_reclaim_validation
+  source_config: configs/v0_3.yaml
+  frozen: true
+
+candidates:
+  - candidate: IR1
+    universe_top_n: 30
+    gate: BTC_up
+    anchor: bullish_volume_shock
+    entry_policy: R1_pullback_1.0pct_reclaim_signal_close_valid_8_bars
+    execution_rule: swing
+    rationale: strongest 10bp net and clearest impulse-reclaim structure
+
+  - candidate: IR2
+    universe_top_n: 50
+    gate: BTC_up
+    anchor: bullish_volume_shock
+    entry_policy: R1_pullback_1.0pct_reclaim_signal_close_valid_8_bars
+    execution_rule: vol_regime_fast
+    rationale: Top50 generalization candidate with more trades
+
+  - candidate: IR3
+    universe_top_n: 30
+    gate: BTC_up
+    anchor: bullish_volume_shock
+    entry_policy: R2_pullback_0.5pct_reclaim_signal_close_valid_8_bars
+    execution_rule: vol_regime_fast
+    rationale: higher-frequency robust candidate
+
+cost_bps: [5, 10, 20, 30, 50]
+boundary_top_ns: [30, 50, 100]

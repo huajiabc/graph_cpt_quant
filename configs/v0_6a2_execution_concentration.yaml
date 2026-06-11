@@ -1,0 +1,49 @@
+experiment:
+  name: v0_6a2_execution_concentration
+  source_config: configs/v0_3.yaml
+  source_candidates: configs/v0_6a1_frozen_candidates.yaml
+  frozen: true
+  mode: validation_only
+
+candidates:
+  - candidate: IR1
+    universe_top_n: 30
+    gate: BTC_up
+    anchor: bullish_volume_shock
+    entry_policy: R1_pullback_1.0pct_reclaim_signal_close_valid_8_bars
+    execution_rule: swing
+    rationale: strongest frozen impulse-reclaim path; validate execution and concentration only
+
+  - candidate: IR2
+    universe_top_n: 50
+    gate: BTC_up
+    anchor: bullish_volume_shock
+    entry_policy: R1_pullback_1.0pct_reclaim_signal_close_valid_8_bars
+    execution_rule: vol_regime_fast
+    rationale: Top50 generalization candidate; validate universe boundary and execution only
+
+  - candidate: IR3
+    universe_top_n: 30
+    gate: BTC_up
+    anchor: bullish_volume_shock
+    entry_policy: R2_pullback_0.5pct_reclaim_signal_close_valid_8_bars
+    execution_rule: vol_regime_fast
+    rationale: higher-frequency 0.5pct reclaim candidate; validate execution sensitivity only
+
+cost_bps: [5, 10, 20, 30, 50]
+
+fill_policies:
+  normal_2bp:
+    touch_buffer_bps: 2
+    mode: limit
+  conservative_5bp:
+    touch_buffer_bps: 5
+    mode: limit
+
+execution_validation:
+  max_lookahead_hours: 16
+  one_min_cache_dataset: klines_1m_v06a2
+  public_trade_cache_dataset: public_trading
+  month_cap_levels: [0.35, 0.40, 0.50]
+  focal_month: "2025-08"
+  tick_required_for_paper_live: true

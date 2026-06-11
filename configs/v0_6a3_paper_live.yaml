@@ -1,0 +1,98 @@
+experiment:
+  name: v0_6a3_impulse_reclaim_paper_live
+  mode: paper_live
+  strategy_id: impulse_reclaim_ir2_primary
+  primary_candidate: IR2
+  timezone: UTC
+  base_interval: 15m
+  frozen: true
+  real_live_allowed: false
+  tick_validation_status: pending
+
+exchange:
+  name: bybit
+  market: linear_usdt_perp
+
+regime:
+  btc_gate:
+    enabled: true
+    required_state: BTC_up
+  shadow_states:
+    - BTC_chop
+    - BTC_down
+
+signal:
+  anchor: bullish_volume_shock
+  volume_z_4h_min: 2.0
+  ret_4h_min: 0.0
+  cooldown_bars: 16
+  frozen: true
+
+liquidity:
+  transient_hot_veto: true
+  transient_hot:
+    turnover_rank_30d_max: 30
+    turnover_rank_90d_min: 50
+
+candidates:
+  - candidate: IR2
+    role: primary
+    universe_top_n: 50
+    entry_policy: reclaim
+    pullback_pct: 0.010
+    valid_bars: 8
+    execution_rule: vol_regime_fast
+    rationale: primary Top50 BTC_up bullish volume shock plus 1pct reclaim candidate
+
+  - candidate: IR1
+    role: secondary
+    universe_top_n: 30
+    entry_policy: reclaim
+    pullback_pct: 0.010
+    valid_bars: 8
+    execution_rule: swing
+    rationale: high-conviction Top30 swing shadow candidate
+
+  - candidate: IR3
+    role: shadow
+    universe_top_n: 30
+    entry_policy: reclaim
+    pullback_pct: 0.005
+    valid_bars: 8
+    execution_rule: vol_regime_fast
+    rationale: higher-frequency 0.5pct reclaim shadow candidate
+
+baselines:
+  enabled: true
+  kinds:
+    - entry_only_reclaim
+    - volume_shock_next_open
+    - volume_shock_pullback_only
+    - matched_random_reclaim
+
+costs:
+  single_side_bps: [5, 10, 20, 30, 50]
+
+portfolio:
+  primary_max_positions: 3
+  shadow_max_positions: [1, 5, 10]
+  one_position_per_symbol: true
+  pyramiding: false
+  sizing: equal_notional
+  ranking:
+    - higher_trailing_30d_turnover
+    - non_transient_hot
+    - earlier_armed_time
+    - symbol_lexicographic
+
+logging:
+  save_signals: true
+  save_trades: true
+  save_baselines: true
+  save_daily_summary: true
+
+stops:
+  stale_data_bars: 2
+  rolling_trade_window: 100
+  pause_if_rolling_10bp_net_lte_zero: true
+  pause_if_baseline_lift_lte_zero: true
