@@ -40,6 +40,17 @@ candidates:
     execution_rule: vol_regime_fast
     rationale: MIR1 filtered by beta extreme continuation state
 
+  - candidate: CIC1_FILTERED_MIR1_V9_RETEST
+    role: shadow_v9_retest
+    universe_top_n: 50
+    market_gate: c2_bucket_beta_extreme_overextended
+    event_col: bullish_volume_shock_event
+    entry_policy: v9_retest
+    pullback_pct: 0.003
+    valid_bars: 8
+    execution_rule: vol_regime_fast
+    rationale: P1 AB shadow - v9 retest predicate (dip+reclaim+ema20) on CIC1 primary signal
+
   - candidate: CIC1_RELAX_B90
     role: relaxed_shadow
     universe_top_n: 50

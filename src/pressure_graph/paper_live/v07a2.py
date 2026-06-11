@@ -165,6 +165,8 @@ def _spec_policy_kind(spec: V07A2Candidate | V07A2Baseline) -> str:
         return "pullback"
     if spec.entry_policy == "next_open":
         return "next_open"
+    if spec.entry_policy == "v9_retest":
+        return "v9_retest"
     raise KeyError(f"unknown v0.7A.2 entry policy: {spec.entry_policy}")
 
 
@@ -322,6 +324,44 @@ def _entry_for_signal(
             "pullback_time": pd.NaT,
             "reclaim_time": pd.NaT,
             "entry_reason": "next_open",
+        }
+
+    if kind == "v9_retest":
+        # P1 port — `pullback_pct` is reinterpreted as the retest buffer:
+        # the bar must dip to or below ``signal_close*(1+buffer)`` and close
+        # back above both signal_close and ema20.
+        from pressure_graph.entry.retest import passes_v9_retest
+
+        retest_time = pd.NaT
+        for idx in range(signal_idx + 1, valid_end + 1):
+            row = group.iloc[idx]
+            ema20 = _safe_float(row.get("ema20"))
+            low = _safe_float(row.get("low"))
+            close = _safe_float(row.get("close"))
+            if not np.isfinite(ema20) or not np.isfinite(low) or not np.isfinite(close):
+                continue
+            if passes_v9_retest(low, close, signal_close, ema20, retest_buffer=spec.pullback_pct):
+                retest_time = pd.Timestamp(row["bar_close_time"])
+                entry_idx = idx + 1
+                if entry_idx >= len(group):
+                    return {
+                        "status": "retest_seen",
+                        "reclaim_time": retest_time,
+                        "entry_reason": "waiting_next_open_after_v9_retest",
+                    }
+                return {
+                    "status": "filled",
+                    "entry_idx": entry_idx,
+                    "entry_time": pd.Timestamp(group.iloc[entry_idx]["bar_open_time"]),
+                    "entry_price": _safe_float(group.iloc[entry_idx]["open"]),
+                    "pullback_time": retest_time,
+                    "reclaim_time": retest_time,
+                    "entry_reason": "v9_retest_next_open",
+                }
+        return {
+            "status": "expired",
+            "pullback_time": retest_time,
+            "entry_reason": "expired_no_v9_retest",
         }
 
     saw_pullback = False
