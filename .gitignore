@@ -17,3 +17,4 @@ pw.txt
 *.pem
 *.key
 .DS_Store
+*.stackdump
