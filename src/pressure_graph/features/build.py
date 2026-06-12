@@ -228,6 +228,25 @@ def add_core_features(df: pd.DataFrame, config: ExperimentConfig) -> pd.DataFram
     return out
 
 
+BTC_VOL_WINDOW = 30 * 96
+BTC_VOL_MIN_PERIODS = 14 * 96
+
+
+def btc_market_state_labels(btc_ret_4h: pd.Series) -> pd.Series:
+    state = pd.Series("BTC_chop", index=btc_ret_4h.index)
+    state[pd.to_numeric(btc_ret_4h, errors="coerce") > 0.01] = "BTC_up"
+    state[pd.to_numeric(btc_ret_4h, errors="coerce") < -0.015] = "BTC_down"
+    return state
+
+
+def btc_vol_regime_labels(percentile: pd.Series) -> pd.Series:
+    regime = pd.Series("mid_vol", index=percentile.index)
+    values = pd.to_numeric(percentile, errors="coerce")
+    regime[values >= 70] = "high_vol"
+    regime[values <= 30] = "low_vol"
+    return regime
+
+
 def add_btc_state(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     btc = out[out["symbol"].eq("BTCUSDT")][
@@ -240,16 +259,12 @@ def add_btc_state(df: pd.DataFrame) -> pd.DataFrame:
         }
     )
     out = out.merge(btc, on=["exchange", "bar_open_time"], how="left")
-    out["btc_market_state"] = "BTC_chop"
-    out.loc[out["btc_ret_4h"] > 0.01, "btc_market_state"] = "BTC_up"
-    out.loc[out["btc_ret_4h"] < -0.015, "btc_market_state"] = "BTC_down"
+    out["btc_market_state"] = btc_market_state_labels(out["btc_ret_4h"])
     vol = out.groupby("exchange")["btc_volatility_4h"].transform(
-        lambda s: rolling_percentile_current_vs_prior(s, 30 * 96, 14 * 96)
+        lambda s: rolling_percentile_current_vs_prior(s, BTC_VOL_WINDOW, BTC_VOL_MIN_PERIODS)
     )
     out["btc_volatility_percentile"] = vol
-    out["btc_vol_regime"] = "mid_vol"
-    out.loc[out["btc_volatility_percentile"] >= 70, "btc_vol_regime"] = "high_vol"
-    out.loc[out["btc_volatility_percentile"] <= 30, "btc_vol_regime"] = "low_vol"
+    out["btc_vol_regime"] = btc_vol_regime_labels(out["btc_volatility_percentile"])
     return out
 
 

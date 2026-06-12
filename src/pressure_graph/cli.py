@@ -210,8 +210,24 @@ def run_v02(
 @app.command("build-v03-features")
 def build_v03_features(
     config: Path = typer.Option(Path("configs/v0.yaml"), help="Path to v0 base config."),
+    streaming: bool = typer.Option(
+        False, help="Memory-bounded batch build for cgroup-limited hosts."
+    ),
+    workers: int = typer.Option(5, help="Streaming worker processes."),
+    batch_size: int = typer.Option(12, help="Symbols per streaming batch."),
 ) -> None:
     cfg = load_config(config)
+    if streaming:
+        from pressure_graph.features.streaming_build import (
+            StreamingBuildConfig,
+            build_v03_features_streaming,
+        )
+
+        output = build_v03_features_streaming(
+            cfg, StreamingBuildConfig(batch_size=batch_size, workers=workers)
+        )
+        typer.echo(f"Wrote v0.3 all-eligible features (streaming): {output}")
+        return
     df = build_v03_features_from_raw(cfg)
     typer.echo(f"Wrote v0.3 all-eligible features: {len(df):,} rows")
 
