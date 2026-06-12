@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -30,6 +31,7 @@ from pressure_graph.paper_live.v07a2 import (
 
 REPORT_ROOT = Path("reports/v0_7d2_cic_mir1_paper_live")
 PAPER_DATA_ROOT = Path("data/paper/v0_7d2")
+OVERFLOW_PORTFOLIO_ID = "P2_MAX8_PLUS_O6_LATE_BURST_OVERFLOW"
 SHADOW_PORTFOLIOS = [
     {
         "portfolio_id": "P0_CIC1_CLUSTER_RANK_MAX5",
@@ -56,6 +58,24 @@ SHADOW_PORTFOLIOS = [
         "max_positions": 8,
         "score_col": "__first_come__",
         "ranking": "first_come_basket",
+    },
+    {
+        "portfolio_id": OVERFLOW_PORTFOLIO_ID,
+        "pool": "CIC1_CIC2_COMBINED",
+        "description": (
+            "P2 max8 core basket plus O6 late-burst overflow: "
+            "portfolio_full, burst_count_so_far>=9, max_overflow_slots=4, "
+            "CIC1 size=0.50 and CIC2 size=0.25."
+        ),
+        "candidates": ["CIC1_FILTERED_MIR1", "CIC2_FILTERED_MIR1"],
+        "max_positions": 8,
+        "core_max_positions": 8,
+        "score_col": "__first_come__",
+        "ranking": "first_come_late_burst_overflow",
+        "selection": "late_burst_overflow",
+        "overflow_min_burst_count": 9,
+        "overflow_max_slots": 4,
+        "overflow_size_by_candidate": {"CIC1_FILTERED_MIR1": 0.50, "CIC2_FILTERED_MIR1": 0.25},
     },
 ]
 
@@ -220,6 +240,63 @@ def _shadow_trade_pool(trades: pd.DataFrame, spec: dict[str, object]) -> pd.Data
     return data.drop_duplicates(["shadow_base_signal_id"], keep="first").copy()
 
 
+def _live_burst_phase_bucket(count: int) -> str:
+    if count <= 3:
+        return "order_1_3"
+    if count <= 8:
+        return "order_4_8"
+    if count <= 14:
+        return "order_9_14"
+    return "order_15_plus"
+
+
+def _add_shadow_burst_phase(pool: pd.DataFrame, window: str = "1h") -> pd.DataFrame:
+    if pool.empty:
+        return pool.copy()
+    out = pool.copy()
+    out["entry_time"] = pd.to_datetime(out["entry_time"], utc=True, errors="coerce")
+    out["exit_time"] = pd.to_datetime(out["exit_time"], utc=True, errors="coerce")
+    out = out.sort_values(["entry_time", "symbol"]).copy()
+    gap = pd.Timedelta(window)
+    burst_ids: list[str] = []
+    burst_idx = -1
+    last_time: pd.Timestamp | None = None
+    for entry in pd.to_datetime(out["entry_time"], utc=True, errors="coerce"):
+        if last_time is None or pd.isna(entry) or entry - last_time > gap:
+            burst_idx += 1
+        burst_ids.append(f"{window}_burst_{burst_idx:04d}")
+        if not pd.isna(entry):
+            last_time = entry
+    out["burst_id"] = burst_ids
+    out["burst_window"] = window
+    out["burst_count_so_far"] = out.groupby("burst_id", sort=False).cumcount() + 1
+    starts = out.groupby("burst_id", sort=False)["entry_time"].transform("min")
+    out["time_since_burst_start_so_far"] = (out["entry_time"] - starts).dt.total_seconds() / 60.0
+    out["burst_phase_bucket"] = out["burst_count_so_far"].map(lambda value: _live_burst_phase_bucket(int(value)))
+    out["asof_phase_passed"] = True
+    out["uses_final_burst_size_for_decision"] = False
+    return out
+
+
+def _shadow_payload(row: Any, spec: dict[str, object], *, max_positions: int, concurrent_positions: int) -> dict[str, object]:
+    payload = row._asdict()
+    payload["portfolio_id"] = spec["portfolio_id"]
+    payload["portfolio_pool"] = spec["pool"]
+    payload["portfolio_description"] = spec["description"]
+    payload["max_positions_at_time"] = max_positions
+    payload["concurrent_positions"] = concurrent_positions
+    payload["core_positions_at_time"] = concurrent_positions
+    payload["overflow_positions_at_time"] = 0
+    payload["is_core"] = True
+    payload["is_overflow"] = False
+    payload["sleeve"] = "core"
+    payload["position_size"] = 1.0
+    payload["extra_exposure"] = 0.0
+    payload["overflow_reason"] = ""
+    payload["overflow_slot_index"] = np.nan
+    return payload
+
+
 def _select_shadow_portfolio(pool: pd.DataFrame, spec: dict[str, object]) -> tuple[pd.DataFrame, pd.DataFrame]:
     if pool.empty:
         return pool.copy(), pool.copy()
@@ -243,12 +320,7 @@ def _select_shadow_portfolio(pool: pd.DataFrame, spec: dict[str, object]) -> tup
         entry = pd.Timestamp(row.entry_time)
         active = [(exit_time, symbol) for exit_time, symbol in active if exit_time > entry]
         active_symbols = {symbol for _, symbol in active}
-        payload = row._asdict()
-        payload["portfolio_id"] = spec["portfolio_id"]
-        payload["portfolio_pool"] = spec["pool"]
-        payload["portfolio_description"] = spec["description"]
-        payload["max_positions_at_time"] = max_positions
-        payload["concurrent_positions"] = len(active)
+        payload = _shadow_payload(row, spec, max_positions=max_positions, concurrent_positions=len(active))
         if str(row.symbol) in active_symbols:
             payload["selected"] = False
             payload["skip_reason"] = "symbol_already_active"
@@ -263,6 +335,70 @@ def _select_shadow_portfolio(pool: pd.DataFrame, spec: dict[str, object]) -> tup
         payload["skip_reason"] = ""
         selected_rows.append(payload)
         active.append((pd.Timestamp(row.exit_time), str(row.symbol)))
+    return pd.DataFrame(selected_rows), pd.DataFrame(skipped_rows)
+
+
+def _overflow_position_size(row: Any, spec: dict[str, object]) -> float:
+    mapping = spec.get("overflow_size_by_candidate", {})
+    if not isinstance(mapping, dict):
+        return 0.0
+    return float(mapping.get(str(getattr(row, "candidate", "")), 0.0))
+
+
+def _select_overflow_shadow_portfolio(pool: pd.DataFrame, spec: dict[str, object]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if pool.empty:
+        return pool.copy(), pool.copy()
+    data = _add_shadow_burst_phase(pool)
+    data["rank_score"] = 0.0
+    data["rank_position"] = data.groupby("entry_time", sort=False)["rank_score"].rank(ascending=False, method="first").astype(int)
+    data = data.sort_values(["entry_time", "symbol", "candidate_priority"], ascending=[True, True, False])
+    active_core: list[tuple[pd.Timestamp, str]] = []
+    active_overflow: list[tuple[pd.Timestamp, str]] = []
+    selected_rows: list[dict[str, object]] = []
+    skipped_rows: list[dict[str, object]] = []
+    core_max = int(spec.get("core_max_positions", spec.get("max_positions", 8)))
+    overflow_max = int(spec.get("overflow_max_slots", 0))
+    overflow_min_burst = int(spec.get("overflow_min_burst_count", 9))
+    for row in data.itertuples(index=False):
+        entry = pd.Timestamp(row.entry_time)
+        active_core = [(exit_time, symbol) for exit_time, symbol in active_core if exit_time > entry]
+        active_overflow = [(exit_time, symbol) for exit_time, symbol in active_overflow if exit_time > entry]
+        active_symbols = {symbol for _, symbol in [*active_core, *active_overflow]}
+        payload = _shadow_payload(row, spec, max_positions=core_max, concurrent_positions=len(active_core) + len(active_overflow))
+        payload["core_positions_at_time"] = len(active_core)
+        payload["overflow_positions_at_time"] = len(active_overflow)
+        if str(row.symbol) in active_symbols:
+            payload["selected"] = False
+            payload["skip_reason"] = "symbol_already_active"
+            skipped_rows.append(payload)
+            continue
+        if len(active_core) < core_max:
+            payload["selected"] = True
+            payload["skip_reason"] = ""
+            selected_rows.append(payload)
+            active_core.append((pd.Timestamp(row.exit_time), str(row.symbol)))
+            continue
+        overflow_size = _overflow_position_size(row, spec)
+        overflow_eligible = int(getattr(row, "burst_count_so_far", 0)) >= overflow_min_burst and overflow_size > 0
+        if overflow_eligible and len(active_overflow) < overflow_max:
+            payload["selected"] = True
+            payload["skip_reason"] = ""
+            payload["is_core"] = False
+            payload["is_overflow"] = True
+            payload["sleeve"] = "overflow"
+            payload["position_size"] = overflow_size
+            payload["extra_exposure"] = overflow_size
+            payload["overflow_reason"] = "portfolio_full_late_burst_overflow"
+            payload["overflow_slot_index"] = len(active_overflow) + 1
+            selected_rows.append(payload)
+            active_overflow.append((pd.Timestamp(row.exit_time), str(row.symbol)))
+            continue
+        payload["selected"] = False
+        if overflow_eligible:
+            payload["skip_reason"] = "overflow_full"
+        else:
+            payload["skip_reason"] = "portfolio_full_not_overflow_eligible"
+        skipped_rows.append(payload)
     return pd.DataFrame(selected_rows), pd.DataFrame(skipped_rows)
 
 
@@ -306,7 +442,10 @@ def shadow_portfolio_live(trades: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFr
     status_rows = []
     for spec in SHADOW_PORTFOLIOS:
         pool = _shadow_trade_pool(trades, spec)
-        selected, skipped = _select_shadow_portfolio(pool, spec)
+        if spec.get("selection") == "late_burst_overflow":
+            selected, skipped = _select_overflow_shadow_portfolio(pool, spec)
+        else:
+            selected, skipped = _select_shadow_portfolio(pool, spec)
         for frame, selected_flag in [(selected, True), (skipped, False)]:
             if frame.empty:
                 continue
@@ -345,6 +484,12 @@ def shadow_portfolio_live(trades: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFr
                 "candidate_count": int(len(pool)),
                 "selected_trades": int(len(selected)),
                 "skipped_candidates": int(len(skipped)),
+                "core_trades": int(selected.get("is_core", pd.Series(dtype=bool)).fillna(False).astype(bool).sum())
+                if not selected.empty
+                else 0,
+                "overflow_trades": int(selected.get("is_overflow", pd.Series(dtype=bool)).fillna(False).astype(bool).sum())
+                if not selected.empty
+                else 0,
             }
         )
     selected_all = pd.concat(selected_frames, ignore_index=True) if selected_frames else pd.DataFrame()
@@ -353,6 +498,183 @@ def shadow_portfolio_live(trades: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFr
     daily = pd.DataFrame(daily_rows)
     status = pd.DataFrame(status_rows)
     return status, selected_all, skipped_all, daily, summary
+
+
+def _overflow_trade_ledger(shadow_trades: pd.DataFrame) -> pd.DataFrame:
+    if shadow_trades.empty or "portfolio_id" not in shadow_trades.columns:
+        return pd.DataFrame()
+    ledger = shadow_trades[shadow_trades["portfolio_id"].astype(str).eq(OVERFLOW_PORTFOLIO_ID)].copy()
+    if ledger.empty:
+        return ledger
+    ledger["entry_time"] = pd.to_datetime(ledger["entry_time"], utc=True, errors="coerce")
+    ledger["exit_time"] = pd.to_datetime(ledger["exit_time"], utc=True, errors="coerce")
+    ledger["position_size"] = pd.to_numeric(ledger.get("position_size", 1.0), errors="coerce").fillna(1.0)
+    ledger["is_core"] = ledger.get("is_core", False).fillna(False).astype(bool)
+    ledger["is_overflow"] = ledger.get("is_overflow", False).fillna(False).astype(bool)
+    ledger["extra_exposure"] = np.where(ledger["is_overflow"], ledger["position_size"], 0.0)
+    if "trade_id" not in ledger.columns:
+        ledger["trade_id"] = (
+            ledger["portfolio_id"].astype(str)
+            + "|"
+            + ledger["symbol"].astype(str)
+            + "|"
+            + ledger["entry_time"].astype(str)
+        )
+    preferred = [
+        "trade_id",
+        "signal_id",
+        "symbol",
+        "candidate",
+        "candidate_type",
+        "is_core",
+        "is_overflow",
+        "sleeve",
+        "overflow_reason",
+        "burst_id",
+        "burst_count_so_far",
+        "burst_phase_bucket",
+        "overflow_slot_index",
+        "position_size",
+        "entry_time",
+        "exit_time",
+        "exit_reason",
+        "net_return_10bp",
+        "net_return_20bp",
+        "net_return_30bp",
+        "extra_exposure",
+        "core_positions_at_time",
+        "overflow_positions_at_time",
+        "concurrent_positions",
+    ]
+    cols = [col for col in preferred if col in ledger.columns]
+    rest = [col for col in ledger.columns if col not in cols]
+    return ledger[cols + rest].sort_values(["entry_time", "symbol"]).reset_index(drop=True)
+
+
+def _weighted_return_sum(sample: pd.DataFrame, cost: int) -> float:
+    if sample.empty:
+        return 0.0
+    net = pd.to_numeric(sample.get(_net_col(cost), pd.Series(dtype=float)), errors="coerce")
+    weight = pd.to_numeric(sample.get("position_size", pd.Series(1.0, index=sample.index)), errors="coerce").fillna(1.0)
+    return float((net * weight).sum())
+
+
+def _weighted_avg_return(sample: pd.DataFrame, cost: int) -> float:
+    if sample.empty:
+        return np.nan
+    weight = pd.to_numeric(sample.get("position_size", pd.Series(1.0, index=sample.index)), errors="coerce").fillna(1.0)
+    denom = float(weight.sum())
+    return _weighted_return_sum(sample, cost) / denom if denom else np.nan
+
+
+def _overflow_summary_row(
+    ledger: pd.DataFrame,
+    *,
+    date: object | None = None,
+    cost: int = 20,
+    core_denominator: int = 8,
+) -> dict[str, object]:
+    core = ledger[ledger.get("is_core", pd.Series(dtype=bool)).fillna(False).astype(bool)] if not ledger.empty else ledger
+    overflow = ledger[ledger.get("is_overflow", pd.Series(dtype=bool)).fillna(False).astype(bool)] if not ledger.empty else ledger
+    core_net = pd.to_numeric(core.get(_net_col(cost), pd.Series(dtype=float)), errors="coerce")
+    overflow_exposure = float(pd.to_numeric(overflow.get("position_size", pd.Series(dtype=float)), errors="coerce").fillna(0.0).sum())
+    overflow_weighted = _weighted_return_sum(overflow, cost)
+    combined_weighted = _weighted_return_sum(ledger, cost)
+    row = {
+        "date": date if date is not None else "ALL",
+        "portfolio_id": OVERFLOW_PORTFOLIO_ID,
+        "cost_single_side_bps": cost,
+        "core_trades": int(len(core)),
+        "overflow_trades": int(len(overflow)),
+        "combined_trades": int(len(ledger)),
+        "core_net": _safe_float(core_net.mean()),
+        "overflow_net": _weighted_avg_return(overflow, cost),
+        "combined_net_per_core_capacity": combined_weighted / max(1, core_denominator),
+        "extra_exposure": overflow_exposure,
+        "overflow_weighted_return_sum": overflow_weighted,
+        "incremental_return_per_extra_exposure": overflow_weighted / overflow_exposure if overflow_exposure else np.nan,
+        "real_live_allowed": False,
+    }
+    return row
+
+
+def _overflow_daily_summary(ledger: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    if ledger.empty:
+        return pd.DataFrame(
+            columns=[
+                "date",
+                "portfolio_id",
+                "cost_single_side_bps",
+                "core_trades",
+                "overflow_trades",
+                "combined_trades",
+                "core_net",
+                "overflow_net",
+                "combined_net_per_core_capacity",
+                "extra_exposure",
+                "overflow_weighted_return_sum",
+                "incremental_return_per_extra_exposure",
+                "real_live_allowed",
+            ]
+        )
+    data = ledger.copy()
+    data["date"] = pd.to_datetime(data["entry_time"], utc=True, errors="coerce").dt.date
+    for day, group in data.groupby("date", sort=True, dropna=False):
+        for cost in [10, 20, 30]:
+            rows.append(_overflow_summary_row(group, date=day, cost=cost))
+    for cost in [10, 20, 30]:
+        rows.append(_overflow_summary_row(data, date="ALL", cost=cost))
+    return pd.DataFrame(rows)
+
+
+def _write_overflow_status(report_root: Path, ledger: pd.DataFrame, daily: pd.DataFrame) -> None:
+    all20 = daily[
+        daily["date"].astype(str).eq("ALL") & pd.to_numeric(daily["cost_single_side_bps"], errors="coerce").eq(20)
+    ] if not daily.empty else pd.DataFrame()
+    row = all20.iloc[0].to_dict() if not all20.empty else {}
+    overflow_trades = int(row.get("overflow_trades", 0) or 0)
+    if overflow_trades < 20:
+        sample_status = "system_check_only"
+        evaluation_status = "no_decision"
+    elif overflow_trades < 50:
+        sample_status = "behavior_check"
+        evaluation_status = "no_upgrade_no_downgrade"
+    else:
+        sample_status = "candidate_check"
+        evaluation_status = "evaluate_incremental_overflow"
+    lines = [
+        "# v1.0D.2 Late-Burst Overflow Shadow",
+        "",
+        "- portfolio_id: P2_MAX8_PLUS_O6_LATE_BURST_OVERFLOW",
+        "- status: shadow_only",
+        "- real_live_allowed: false",
+        "- core: P2 CIC1+CIC2 combined max8, size=1.0",
+        "- overflow_trigger: portfolio_full and burst_count_so_far >= 9",
+        "- overflow_slots: 4",
+        "- overflow_size: CIC1=0.50, CIC2=0.25",
+        "- exit: vol_regime_fast",
+        "",
+        "## 20bp Summary",
+        f"- core_trades: {int(row.get('core_trades', 0) or 0)}",
+        f"- overflow_trades: {overflow_trades}",
+        f"- combined_trades: {int(row.get('combined_trades', 0) or 0)}",
+        f"- core_net20: {row.get('core_net', np.nan):.4%}" if pd.notna(row.get("core_net", np.nan)) else "- core_net20: n/a",
+        f"- overflow_net20: {row.get('overflow_net', np.nan):.4%}" if pd.notna(row.get("overflow_net", np.nan)) else "- overflow_net20: n/a",
+        f"- combined_net20_per_core_capacity: {row.get('combined_net_per_core_capacity', np.nan):.4%}"
+        if pd.notna(row.get("combined_net_per_core_capacity", np.nan))
+        else "- combined_net20_per_core_capacity: n/a",
+        f"- extra_exposure: {row.get('extra_exposure', 0.0):.4f}",
+        f"- incremental_return_per_extra_exposure: {row.get('incremental_return_per_extra_exposure', np.nan):.4%}"
+        if pd.notna(row.get("incremental_return_per_extra_exposure", np.nan))
+        else "- incremental_return_per_extra_exposure: n/a",
+        f"- sample_status: {sample_status}",
+        f"- evaluation_status: {evaluation_status}",
+    ]
+    if not ledger.empty:
+        last_entry = pd.to_datetime(ledger["entry_time"], utc=True, errors="coerce").max()
+        lines.extend(["", f"- latest_entry_time: {last_entry}"])
+    (report_root / "overflow_current_status.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 def mir1_cic_overlap_live(
@@ -586,6 +908,8 @@ def write_v07d2_outputs(
     partition = overlap_partition_audit(prepared, signals, trades)
     overlap = mir1_cic_overlap_live(signals, trades, partition)
     shadow_status, shadow_trades, shadow_skipped, shadow_daily, shadow_summary = shadow_portfolio_live(trades)
+    overflow_ledger = _overflow_trade_ledger(shadow_trades)
+    overflow_daily = _overflow_daily_summary(overflow_ledger)
     outputs = {
         "paper_signals": report_root / "paper_signals.parquet",
         "paper_trades": report_root / "paper_trades.parquet",
@@ -606,6 +930,9 @@ def write_v07d2_outputs(
         "portfolio_daily_summary": report_root / "portfolio_daily_summary.csv",
         "portfolio_current_status": report_root / "portfolio_current_status.md",
         "ranking_shadow_summary": report_root / "ranking_shadow_summary.csv",
+        "overflow_trade_ledger": report_root / "overflow_trade_ledger.parquet",
+        "overflow_daily_summary": report_root / "overflow_daily_summary.csv",
+        "overflow_current_status": report_root / "overflow_current_status.md",
         "current_status": report_root / "current_status.md",
         "candidate_status": report_root / "candidate_status.md",
         "decision_log": report_root / "decision_log.md",
@@ -635,7 +962,10 @@ def write_v07d2_outputs(
     write_parquet(shadow_skipped, outputs["paper_skipped_candidates"])
     shadow_daily.to_csv(outputs["portfolio_daily_summary"], index=False)
     shadow_summary.to_csv(outputs["ranking_shadow_summary"], index=False)
+    write_parquet(overflow_ledger, outputs["overflow_trade_ledger"])
+    overflow_daily.to_csv(outputs["overflow_daily_summary"], index=False)
     _write_shadow_status(report_root, shadow_status, shadow_summary)
+    _write_overflow_status(report_root, overflow_ledger, overflow_daily)
     _write_status(report_root, prepared, signals, trades, baseline_trades, config, shadow_status, shadow_summary)
     _append_decision_log(report_root, prepared, trades, config)
     return outputs
@@ -777,6 +1107,7 @@ def write_v07d2_s2_paper_live(
 
 
 __all__ = [
+    "OVERFLOW_PORTFOLIO_ID",
     "PAPER_DATA_ROOT",
     "REPORT_ROOT",
     "S2_PAPER_LIVE_CANDIDATES",

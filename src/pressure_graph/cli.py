@@ -48,8 +48,13 @@ from pressure_graph.pipeline import (
     run_v09c_orderflow_capacity_ranking,
     run_v09e_orderbook_capacity_ranking,
     run_v09e1_historical_orderbook_replay,
+    run_v09e2_upside_vacuum_validation_report,
     run_v09d_cic_capacity_architecture_from_features,
     run_v09d1_burst_capacity_execution_from_features,
+    run_v10a_cic_basket_portfolio_from_features,
+    run_v10b_slot_turnover_attribution_from_features,
+    run_v10c_burst_phase_allocation_from_features,
+    run_v10d_late_burst_overflow_from_features,
     run_v10_short_mirror_failure_from_features,
     run_v06a_reclaim_alpha_from_features,
 )
@@ -683,6 +688,23 @@ def run_v09e1(
         typer.echo(f"{name}: {path}")
 
 
+@app.command("run-v09e2")
+def run_v09e2(
+    max_files: int | None = typer.Option(
+        None,
+        help="Optional cap on missing official orderbook symbol-day files to download/replay.",
+    ),
+    download: bool = typer.Option(
+        True,
+        "--download/--no-download",
+        help="Download missing Bybit official historical orderbook zip files.",
+    ),
+) -> None:
+    outputs = run_v09e2_upside_vacuum_validation_report(max_files=max_files, download=download)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
 @app.command("run-v09d")
 def run_v09d(
     config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
@@ -709,6 +731,46 @@ def run_v10_short(
 ) -> None:
     cfg = load_config(config)
     outputs = run_v10_short_mirror_failure_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v10a-cic-basket")
+def run_v10a_cic_basket(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    cfg = load_config(config)
+    outputs = run_v10a_cic_basket_portfolio_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v10b-slot-turnover")
+def run_v10b_slot_turnover(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    cfg = load_config(config)
+    outputs = run_v10b_slot_turnover_attribution_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v10c-burst-phase")
+def run_v10c_burst_phase(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    cfg = load_config(config)
+    outputs = run_v10c_burst_phase_allocation_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v10d-late-overflow")
+def run_v10d_late_overflow(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    cfg = load_config(config)
+    outputs = run_v10d_late_burst_overflow_from_features(cfg)
     for name, path in outputs.items():
         typer.echo(f"{name}: {path}")
 

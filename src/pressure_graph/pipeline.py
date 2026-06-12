@@ -51,8 +51,13 @@ from pressure_graph.reports.v09b2 import write_v09b2_ranking_failure_attribution
 from pressure_graph.reports.v09c import write_v09c_orderflow_capacity_ranking
 from pressure_graph.reports.v09e import write_v09e_orderbook_capacity_ranking
 from pressure_graph.reports.v09e1 import V09E1Config, run_historical_orderbook_replay
+from pressure_graph.reports.v09e2 import V09E2Config, run_v09e2_upside_vacuum_validation
 from pressure_graph.reports.v09d import write_v09d_cic_capacity_architecture
 from pressure_graph.reports.v09d1 import write_v09d1_burst_capacity_execution
+from pressure_graph.reports.v10a_cic_basket_portfolio import write_v10a_cic_basket_portfolio
+from pressure_graph.reports.v10b_slot_turnover_attribution import write_v10b_slot_turnover_attribution
+from pressure_graph.reports.v10c_burst_phase_allocation import write_v10c_burst_phase_allocation
+from pressure_graph.reports.v10d_late_burst_overflow import write_v10d_late_burst_overflow
 from pressure_graph.reports.v10_short_mirror import write_v10_short_mirror_failure
 from pressure_graph.paper_live import (
     write_v05_paper_live,
@@ -501,6 +506,14 @@ def run_v09e1_historical_orderbook_replay(
     )
 
 
+def run_v09e2_upside_vacuum_validation_report(
+    *,
+    max_files: int | None = None,
+    download: bool = True,
+) -> dict[str, Path]:
+    return run_v09e2_upside_vacuum_validation(V09E2Config(max_files=max_files, download=download))
+
+
 def run_v09d_cic_capacity_architecture_from_features(config: ExperimentConfig) -> dict[str, Path]:
     features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
     instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
@@ -511,6 +524,30 @@ def run_v09d1_burst_capacity_execution_from_features(config: ExperimentConfig) -
     features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
     instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
     return write_v09d1_burst_capacity_execution(features_path, instruments, config)
+
+
+def run_v10a_cic_basket_portfolio_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v10a_cic_basket_portfolio(features_path, instruments, config)
+
+
+def run_v10b_slot_turnover_attribution_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v10b_slot_turnover_attribution(features_path, instruments, config)
+
+
+def run_v10c_burst_phase_allocation_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v10c_burst_phase_allocation(features_path, instruments, config)
+
+
+def run_v10d_late_burst_overflow_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v10d_late_burst_overflow(features_path, instruments, config)
 
 
 def run_v10_short_mirror_failure_from_features(config: ExperimentConfig) -> dict[str, Path]:

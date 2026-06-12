@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import zipfile
 from pathlib import Path
+import json
 
-import orjson
 import pandas as pd
 import pytest
 
@@ -12,7 +12,7 @@ from pressure_graph.reports.v09e1 import build_download_manifest, load_replay_ta
 
 def _write_orderbook_zip(path: Path, rows: list[dict[str, object]]) -> None:
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        payload = b"\n".join(orjson.dumps(row) for row in rows) + b"\n"
+        payload = "\n".join(json.dumps(row, separators=(",", ":")) for row in rows).encode() + b"\n"
         archive.writestr(path.name.replace(".zip", ""), payload)
 
 

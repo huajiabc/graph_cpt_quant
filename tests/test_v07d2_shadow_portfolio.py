@@ -145,3 +145,27 @@ def test_v07d2_combined_basket_max8_is_first_come_shadow() -> None:
     basket_skipped = skipped[skipped["portfolio_id"].eq("P2_CIC_COMBINED_BASKET_MAX8")]
     assert basket_selected["symbol"].tolist() == [f"S{idx}USDT" for idx in range(8)]
     assert basket_skipped["skip_reason"].tolist() == ["portfolio_full", "portfolio_full"]
+
+
+def test_v07d2_late_burst_overflow_selects_small_overflow_slots() -> None:
+    signal_time = pd.Timestamp("2026-06-01T00:00:00Z")
+    trades = pd.DataFrame(
+        [
+            _trade(f"S{idx}USDT", signal_time=signal_time + pd.Timedelta(minutes=5 * idx), score=0.0, net20=0.02)
+            for idx in range(10)
+        ]
+    )
+
+    status, selected, skipped, _, _ = shadow_portfolio_live(trades)
+
+    overflow_status = status[status["portfolio_id"].eq("P2_MAX8_PLUS_O6_LATE_BURST_OVERFLOW")].iloc[0]
+    assert overflow_status["selected_trades"] == 10
+    assert overflow_status["core_trades"] == 8
+    assert overflow_status["overflow_trades"] == 2
+    assert overflow_status["skipped_candidates"] == 0
+
+    ledger = selected[selected["portfolio_id"].eq("P2_MAX8_PLUS_O6_LATE_BURST_OVERFLOW")]
+    overflow = ledger[ledger["is_overflow"].astype(bool)]
+    assert overflow["burst_count_so_far"].min() >= 9
+    assert overflow["position_size"].tolist() == [0.5, 0.5]
+    assert skipped[skipped["portfolio_id"].eq("P2_MAX8_PLUS_O6_LATE_BURST_OVERFLOW")].empty

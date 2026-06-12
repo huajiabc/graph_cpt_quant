@@ -215,7 +215,11 @@ def _load_orderbook_features(orderbook_root: Path, symbols: list[str]) -> pd.Dat
                     pd.to_numeric(out[fallback], errors="coerce")
                 )
             out = out.drop(columns=[fallback], errors="ignore")
-    out["source"] = "bybit_rest_orderbook_snapshot"
+    if "source" not in out.columns:
+        out["source"] = "bybit_rest_orderbook_snapshot"
+    else:
+        out["source"] = out["source"].fillna("").astype(str)
+        out.loc[out["source"].eq(""), "source"] = "bybit_rest_orderbook_snapshot"
     return out
 
 

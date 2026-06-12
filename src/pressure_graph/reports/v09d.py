@@ -262,7 +262,7 @@ def _basket_capacity_curve(trades: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataF
                     notes="Basket capacity accepts early eligible CIC trades and scales weight by capacity units.",
                 )
             )
-            if max_positions in {10, 15, 20}:
+            if max_positions in {5, 8, 10, 15, 20}:
                 if not selected.empty:
                     local = selected.copy()
                     local["architecture"] = "basket_capacity"
@@ -622,6 +622,8 @@ def write_v09d_cic_capacity_architecture(
         "capital_lock_summary": report_root / "capital_lock_summary.csv",
         "selected_vs_skipped_by_burst": report_root / "selected_vs_skipped_by_burst.csv",
         "portfolio_timeline": report_root / "portfolio_timeline.csv",
+        "selected_trades": report_root / "selected_trades.csv",
+        "skipped_trades": report_root / "skipped_trades.csv",
         "candidate_notes": report_root / "candidate_notes.md",
     }
     basket.to_csv(outputs["basket_capacity_curve"], index=False)
@@ -632,6 +634,16 @@ def write_v09d_cic_capacity_architecture(
     burst_compare.to_csv(outputs["selected_vs_skipped_by_burst"], index=False)
     timeline.to_csv(outputs["portfolio_timeline"], index=False)
     skipped.to_csv(report_root / "portfolio_skipped_candidates.csv", index=False)
+    p2_max8_selected = timeline[
+        timeline.get("pool", pd.Series(dtype=str)).astype(str).eq("P2_CIC1_CIC2_COMBINED")
+        & timeline.get("max_positions", pd.Series(dtype=str)).astype(str).eq("8")
+    ].copy()
+    p2_max8_skipped = skipped[
+        skipped.get("pool", pd.Series(dtype=str)).astype(str).eq("P2_CIC1_CIC2_COMBINED")
+        & skipped.get("max_positions", pd.Series(dtype=str)).astype(str).eq("8")
+    ].copy()
+    p2_max8_selected.to_csv(outputs["selected_trades"], index=False)
+    p2_max8_skipped.to_csv(outputs["skipped_trades"], index=False)
     _write_notes(report_root, basket, burst, reserve)
     return outputs
 
