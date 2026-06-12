@@ -31,6 +31,10 @@ def _write_raw_layout(data_root: Path) -> None:
         open_ = np.roll(close, 1)
         open_[0] = close[0]
         volume = np.abs(rng.normal(1_000, 200, BARS))
+        if symbol == "CCCUSDT":
+            # Integer-lot coin: whole-number volumes parse as int64 in raw
+            # parquets and must not break cross-part schema unification.
+            volume = np.round(volume).astype(np.int64)
         klines = pd.DataFrame(
             {
                 "exchange": "bybit",

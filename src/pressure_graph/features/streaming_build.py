@@ -45,6 +45,11 @@ from pressure_graph.universe.selection import apply_universe_flags
 LIGHT_KLINE_COLUMNS = ["exchange", "symbol", "bar_open_time", "close", "volume", "turnover"]
 FLAG_COLUMNS = ["universe_static_current_top30", "universe_dynamic_monthly_top30"]
 BTC_BASE_COLUMNS = ["exchange", "bar_open_time", "btc_ret_1h", "btc_ret_4h", "btc_volatility_4h"]
+# The monolithic path concatenates every symbol's raw frame before building,
+# which silently promotes integer-typed quote data (whole-number volumes on
+# integer-lot coins) to float64. Batches must normalize explicitly or parts
+# end up with clashing schemas.
+NUMERIC_BASE_COLUMNS = ["open", "high", "low", "close", "volume", "turnover", "oi_base", "oi_value_usdt"]
 
 
 @dataclass(frozen=True)
@@ -168,6 +173,9 @@ def _build_symbol_batch(
         return ""
     part = pd.concat(frames, ignore_index=True)
     part = part.sort_values(["exchange", "symbol", "bar_open_time"]).reset_index(drop=True)
+    for col in NUMERIC_BASE_COLUMNS:
+        if col in part.columns:
+            part[col] = pd.to_numeric(part[col], errors="coerce").astype("float64")
     part_path.parent.mkdir(parents=True, exist_ok=True)
     write_parquet(part, part_path)
     return str(part_path)
@@ -179,27 +187,35 @@ def _read_optional(path: Path) -> pd.DataFrame:
     return read_parquet(path)
 
 
+def _unified_schema(part_paths: list[Path]) -> pa.Schema:
+    """Single schema across parts; numeric dtype clashes promote to float64."""
+    schemas = [pq.read_schema(path) for path in part_paths]
+    base = schemas[0]
+    for other_path, other in zip(part_paths[1:], schemas[1:], strict=True):
+        if other.names != base.names:
+            raise ValueError(f"part column-name mismatch: {other_path}")
+    fields = []
+    for name in base.names:
+        types = {schema.field(name).type for schema in schemas}
+        if len(types) == 1:
+            fields.append(base.field(name))
+        elif all(pa.types.is_integer(t) or pa.types.is_floating(t) for t in types):
+            fields.append(pa.field(name, pa.float64()))
+        else:
+            raise ValueError(f"part dtype mismatch for column {name}: {sorted(map(str, types))}")
+    return pa.schema(fields)
+
+
 def _merge_parts(part_paths: list[Path], output: Path) -> int:
-    writer: pq.ParquetWriter | None = None
+    if not part_paths:
+        return 0
+    schema = _unified_schema(part_paths)
     rows = 0
-    schema: pa.Schema | None = None
-    try:
+    with pq.ParquetWriter(output, schema) as writer:
         for path in part_paths:
-            table = pq.read_table(path)
-            if schema is None:
-                schema = table.schema
-                writer = pq.ParquetWriter(output, schema)
-            elif table.schema.names != schema.names:
-                raise ValueError(
-                    f"part schema mismatch: {path} has {table.schema.names[:5]}..."
-                )
-            else:
-                table = table.cast(schema)
+            table = pq.read_table(path).cast(schema)
             writer.write_table(table)
             rows += table.num_rows
-    finally:
-        if writer is not None:
-            writer.close()
     return rows
 
 
