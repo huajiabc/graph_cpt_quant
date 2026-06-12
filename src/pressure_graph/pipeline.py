@@ -67,6 +67,10 @@ from pressure_graph.reports.v11_orderflow_burst_ranking import (
     V11Config,
     write_v11_orderflow_burst_ranking,
 )
+from pressure_graph.reports.v12s_short_motif_atlas import (
+    ShortAtlasConfig,
+    write_v12s_short_motif_atlas,
+)
 from pressure_graph.paper_live import (
     write_v05_paper_live,
     write_v06a3_paper_live,
@@ -592,6 +596,15 @@ def run_v11_orderflow_burst_ranking_from_features(
         features_path, instruments, config, ensure_dir(v10a_cfg.v09d_root), v10a_cfg
     )
     return write_v11_orderflow_burst_ranking(trades, v11_config or V11Config())
+
+
+def run_v12s_short_motif_atlas_from_features(
+    config: ExperimentConfig,
+    short_config: ShortAtlasConfig | None = None,
+) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v12s_short_motif_atlas(features_path, instruments, config, short_config or ShortAtlasConfig())
 
 
 def run_v10_short_mirror_failure_from_features(config: ExperimentConfig) -> dict[str, Path]:

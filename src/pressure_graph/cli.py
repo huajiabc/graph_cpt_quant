@@ -57,6 +57,7 @@ from pressure_graph.pipeline import (
     run_v10d_late_burst_overflow_from_features,
     run_v10_short_mirror_failure_from_features,
     run_v11_orderflow_burst_ranking_from_features,
+    run_v12s_short_motif_atlas_from_features,
     run_v06a_reclaim_alpha_from_features,
 )
 from pressure_graph.reports.v06a1 import load_v06a1_config
@@ -830,6 +831,17 @@ def run_v11_orderflow_ranking(
     """Selected-vs-skipped orderflow ranking experiment over the CIC burst pool."""
     cfg = load_config(config)
     outputs = run_v11_orderflow_burst_ranking_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v12s-short-atlas")
+def run_v12s_short_atlas(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """Phase-1 short motif atlas: failure-path candidate families S1/S2/S3/S5 (research only)."""
+    cfg = load_config(config)
+    outputs = run_v12s_short_motif_atlas_from_features(cfg)
     for name, path in outputs.items():
         typer.echo(f"{name}: {path}")
 
