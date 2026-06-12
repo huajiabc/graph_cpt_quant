@@ -189,20 +189,43 @@ def collect_exchange(
             finally:
                 local_client.close()
 
+        failed: list[str] = []
         if workers > 1 and symbols_to_fetch:
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 futures = {executor.submit(collect_symbol, symbol): symbol for symbol in symbols_to_fetch}
                 for future in as_completed(futures):
-                    future.result()
+                    symbol = futures[future]
+                    try:
+                        future.result()
+                    except Exception as exc:  # noqa: BLE001 - one flaky symbol must not kill the run
+                        failed.append(symbol)
+                        print(f"[collect] {symbol} failed: {exc}", flush=True)
+            if failed:
+                print(
+                    f"[collect] {len(failed)} symbols failed and can be resumed with "
+                    f"--skip-existing: {','.join(sorted(failed))}",
+                    flush=True,
+                )
             return selected
 
         for symbol in symbols_to_fetch:
-            klines = client.klines(symbol, start, end, config.experiment.base_interval)
-            funding = client.funding_history(symbol, start, end)
-            oi = client.open_interest(symbol, start, end, config.experiment.base_interval)
+            try:
+                klines = client.klines(symbol, start, end, config.experiment.base_interval)
+                funding = client.funding_history(symbol, start, end)
+                oi = client.open_interest(symbol, start, end, config.experiment.base_interval)
+            except Exception as exc:  # noqa: BLE001 - one flaky symbol must not kill the run
+                failed.append(symbol)
+                print(f"[collect] {symbol} failed: {exc}", flush=True)
+                continue
             write_parquet(klines, raw_path(config.paths.data_root, exchange, "klines", symbol))
             write_parquet(funding, raw_path(config.paths.data_root, exchange, "funding", symbol))
             write_parquet(oi, raw_path(config.paths.data_root, exchange, "open_interest", symbol))
+        if failed:
+            print(
+                f"[collect] {len(failed)} symbols failed and can be resumed with "
+                f"--skip-existing: {','.join(sorted(failed))}",
+                flush=True,
+            )
         return selected
     finally:
         client.close()
