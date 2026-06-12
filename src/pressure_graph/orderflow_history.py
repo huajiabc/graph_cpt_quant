@@ -288,7 +288,12 @@ def resolve_binance_symbol(
         return cached or None
     for candidate in binance_symbol_candidates(bybit_symbol, cfg.extra_aliases):
         for day in probe_days:
-            if download_aggtrades_day(candidate, day, cfg) is not None:
+            try:
+                path = download_aggtrades_day(candidate, day, cfg)
+            except (HTTPError, URLError, TimeoutError, OSError) as exc:
+                print(f"[orderflow-history] probe failed {candidate} {day}: {exc}", flush=True)
+                continue
+            if path is not None:
                 symbol_map[bybit_symbol] = candidate
                 return candidate
     symbol_map[bybit_symbol] = ""
