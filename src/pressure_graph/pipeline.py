@@ -75,6 +75,10 @@ from pressure_graph.reports.v12s2_long_risk_off_overlay import (
     RiskOffConfig,
     write_v12s2_long_risk_off_overlay,
 )
+from pressure_graph.reports.v12s3_current_stack_risk_off_overlay import (
+    CurrentStackConfig,
+    write_v12s3_current_stack_risk_off,
+)
 from pressure_graph.paper_live import (
     write_v05_paper_live,
     write_v06a3_paper_live,
@@ -618,6 +622,17 @@ def run_v12s2_long_risk_off_overlay_from_features(
     features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
     instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
     return write_v12s2_long_risk_off_overlay(features_path, instruments, config, risk_off_config or RiskOffConfig())
+
+
+def run_v12s3_current_stack_risk_off_from_features(
+    config: ExperimentConfig,
+    stack_config: CurrentStackConfig | None = None,
+) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v12s3_current_stack_risk_off(
+        features_path, instruments, config, stack_config or CurrentStackConfig()
+    )
 
 
 def run_v10_short_mirror_failure_from_features(config: ExperimentConfig) -> dict[str, Path]:
