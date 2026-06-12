@@ -63,6 +63,8 @@ class RiskOffConfig:
     breadth_window_bars: int = 16  # 4h trailing window for market breadth.
     breadth_threshold: int = 3  # distinct symbols failing -> market risk-off.
     max_positions_grid: tuple[int, ...] = (5, 8, 10)
+    cooldown_sweep_bars: tuple[int, ...] = (8, 16, 24, 32, 48, 64, 96)  # 2h..24h
+    half_size_factor: float = 0.5  # size-down variant: keep the long at half P&L.
 
 
 def stream_risk_off_events(
@@ -167,10 +169,40 @@ def _apply_market_gate(pool: pd.DataFrame, events: pd.DataFrame, cfg: RiskOffCon
     return gated
 
 
-def _mode_metrics(pool: pd.DataFrame, gated: pd.Series, label: str, max_positions: int) -> dict[str, object]:
-    kept = pool[~gated.to_numpy()].copy()
+def _mode_metrics(
+    pool: pd.DataFrame,
+    gated: pd.Series,
+    label: str,
+    max_positions: int,
+    *,
+    half_size: bool = False,
+    half_size_factor: float = 0.5,
+) -> dict[str, object]:
+    """Basket metrics under a gate.
+
+    full-skip (default): gated longs are removed from the pool; first-come
+    selection backfills the freed slots.
+    half-size: gated longs stay in the pool and can be selected, but their P&L
+    contribution is scaled by ``half_size_factor`` (sized down, slot still used).
+    """
     removed = pool[gated.to_numpy()].copy()
-    selected, skipped = select_portfolio(kept, score_col="rank_first_come_first_served", max_positions=max_positions)
+    if half_size:
+        marked = pool.copy()
+        # NOTE: column name must be a valid identifier (no leading underscore) or
+        # select_portfolio's itertuples() mangles it and the scaling silently no-ops.
+        marked["risk_off_gated"] = gated.to_numpy()
+        selected, skipped = select_portfolio(
+            marked, score_col="rank_first_come_first_served", max_positions=max_positions
+        )
+        if not selected.empty and "risk_off_gated" in selected.columns:
+            scale = np.where(selected["risk_off_gated"].fillna(False).to_numpy(), half_size_factor, 1.0)
+            selected = selected.copy()
+            selected["net_return"] = pd.to_numeric(selected["net_return"], errors="coerce") * scale
+    else:
+        kept = pool[~gated.to_numpy()].copy()
+        selected, skipped = select_portfolio(
+            kept, score_col="rank_first_come_first_served", max_positions=max_positions
+        )
     metrics = _portfolio_metrics(
         selected,
         skipped,
@@ -192,6 +224,38 @@ def _mode_metrics(pool: pd.DataFrame, gated: pd.Series, label: str, max_position
     return metrics
 
 
+def _cooldown_sweep(pool: pd.DataFrame, events: pd.DataFrame, cfg: RiskOffConfig) -> pd.DataFrame:
+    """Symbol gate vs cooldown window (full-skip and half-size) at max8."""
+    rows: list[dict[str, object]] = []
+    max_positions = 8
+    for cooldown in cfg.cooldown_sweep_bars:
+        sweep_cfg = RiskOffConfig(
+            motifs=cfg.motifs,
+            symbol_cooldown_bars=cooldown,
+            breadth_window_bars=cfg.breadth_window_bars,
+            breadth_threshold=cfg.breadth_threshold,
+        )
+        gated = _apply_symbol_gate(pool, events, sweep_cfg)
+        for half in (False, True):
+            metrics = _mode_metrics(
+                pool, gated, "symbol_half_size" if half else "symbol_full_skip",
+                max_positions, half_size=half, half_size_factor=cfg.half_size_factor,
+            )
+            rows.append(
+                {
+                    "cooldown_bars": cooldown,
+                    "variant": "half_size" if half else "full_skip",
+                    "max_positions": max_positions,
+                    "longs_gated": metrics["longs_gated"],
+                    "portfolio_net20": metrics["portfolio_net20"],
+                    "max_drawdown_proxy": metrics["max_drawdown_proxy"],
+                    "return_per_drawdown": metrics["return_per_drawdown"],
+                    "max_month_contribution": metrics.get("max_month_contribution", np.nan),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 def _overlay_table(pool: pd.DataFrame, events: pd.DataFrame, cfg: RiskOffConfig) -> pd.DataFrame:
     symbol_gate = _apply_symbol_gate(pool, events, cfg)
     market_gate = _apply_market_gate(pool, events, cfg)
@@ -206,7 +270,13 @@ def _overlay_table(pool: pd.DataFrame, events: pd.DataFrame, cfg: RiskOffConfig)
     return pd.DataFrame(rows)
 
 
-def _write_notes(report_root: Path, table: pd.DataFrame, events: pd.DataFrame, cfg: RiskOffConfig) -> None:
+def _write_notes(
+    report_root: Path,
+    table: pd.DataFrame,
+    events: pd.DataFrame,
+    cfg: RiskOffConfig,
+    sweep: pd.DataFrame | None = None,
+) -> None:
     lines = [
         "# v1.2s2 Long Risk-Off Overlay",
         "",
@@ -245,12 +315,27 @@ def _write_notes(report_root: Path, table: pd.DataFrame, events: pd.DataFrame, c
             )
             lines.append(f"## Verdict\n- Best mode by ret/dd: {b['mode']}. {verdict}")
             lines.append("")
+    if sweep is not None and not sweep.empty:
+        lines.append("## Cooldown sweep (symbol gate, max8)")
+        best = sweep.sort_values("return_per_drawdown", ascending=False).iloc[0]
+        lines.append(
+            f"- best: cooldown={int(best['cooldown_bars'])} bars, {best['variant']}, "
+            f"net20={best['portfolio_net20']:.4%}, max_dd={best['max_drawdown_proxy']:.4%}, "
+            f"ret/dd={best['return_per_drawdown']:.2f}."
+        )
+        for row in sweep.sort_values(["variant", "cooldown_bars"]).itertuples(index=False):
+            lines.append(
+                f"  - {row.variant} cd={int(row.cooldown_bars)}: net20={row.portfolio_net20:.4%}, "
+                f"max_dd={row.max_drawdown_proxy:.4%}, ret/dd={row.return_per_drawdown:.2f}, gated={int(row.longs_gated)}."
+            )
+        lines.append("")
     lines.extend(
         [
             "## Discipline",
             "- Strict as-of: a long is only gated by confirmations with feature_time <= its signal_time.",
-            "- Gated longs free capacity that first-come selection backfills (next-best long).",
-            "- gated_realized_net < 0 means the gate removed losers on average (the intended effect).",
+            "- full-skip frees capacity (first-come backfills); half-size keeps the long at scaled P&L.",
+            "- gated_realized_net is reported honestly: positive means the gate is a risk-adjusted",
+            "  reshuffle (drawdown/concentration win), not loser-deletion.",
             "- No paper-live / real-live permission changes.",
         ]
     )
@@ -276,19 +361,22 @@ def write_v12s2_long_risk_off_overlay(
     events = stream_risk_off_events(feature_path, rank30, rank90, symbols, config, cfg)
     pool = _prepare_pool(cfg)
     table = _overlay_table(pool, events, cfg) if not pool.empty else pd.DataFrame()
+    sweep = _cooldown_sweep(pool, events, cfg) if not pool.empty else pd.DataFrame()
     times, breadth = _breadth_at(events, cfg)
     breadth_timeline = pd.DataFrame({"feature_time": times, "breadth": breadth})
 
     outputs = {
         "overlay_summary": report_root / "overlay_summary.csv",
+        "cooldown_sweep": report_root / "cooldown_sweep.csv",
         "risk_off_events": report_root / "risk_off_events.csv",
         "breadth_timeline": report_root / "breadth_timeline.csv",
         "candidate_notes": report_root / "candidate_notes.md",
     }
     table.to_csv(outputs["overlay_summary"], index=False)
+    sweep.to_csv(outputs["cooldown_sweep"], index=False)
     events.to_csv(outputs["risk_off_events"], index=False)
     breadth_timeline.to_csv(outputs["breadth_timeline"], index=False)
-    _write_notes(report_root, table, events, cfg)
+    _write_notes(report_root, table, events, cfg, sweep)
     return outputs
 
 

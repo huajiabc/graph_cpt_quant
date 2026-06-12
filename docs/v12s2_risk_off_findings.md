@@ -90,15 +90,51 @@ drawdown and concentration cuts, with net a modest bonus — not a net-alpha sto
 - Revisit the market gate only with a much higher breadth threshold or BTC_down
   conditioning, so it stops vetoing healthy co-impulse windows.
 
+## Phase-3: tuning, size-down, and a live shadow gate
+
+### Cooldown sweep (symbol gate, max8, full-skip)
+
+| cooldown | net20 | max_dd | ret/dd | gated |
+|---|---|---|---|---|
+| 8 (2h) | 11.73% | -3.66% | 3.21 | 4 |
+| 24 (6h) | 12.06% | -2.88% | 4.19 | 33 |
+| 32 (8h) | 11.74% | -2.88% | 4.08 | 34 |
+| **48 (12h)** | **12.24%** | **-2.50%** | **4.90** | 40 |
+| 64 (16h) | 11.62% | -2.50% | 4.65 | 43 |
+| 96 (24h) | 11.56% | -2.50% | 4.63 | 44 |
+
+Drawdown improves monotonically with the cooldown and plateaus around 48–96 bars;
+net peaks at **48 bars (12h)**. 48 is the tuned default: net 12.24%, drawdown
+-2.50% (vs baseline -4.08%, a 39% cut), ret/dd 4.90 (vs 2.67).
+
+### Full-skip beats size-down
+
+A half-size variant (keep the gated long at 0.5× P&L instead of skipping it)
+helps drawdown but trails full-skip on every axis (cd=48: net 10.46% / dd -3.18%
+/ ret-dd 3.29 vs full-skip 12.24% / -2.50% / 4.90). **Standing fully aside beats
+sizing down** — consistent with the mechanism (the freed slot backfills with a
+fresher setup, which a half-size long blocks).
+
+### Live shadow gate (behavior-preserving)
+
+`pressure_graph.live.risk_off_gate` packages the gate for the live pipeline:
+`build_risk_off_events`, `annotate_signals_with_risk_off`, and a single-point
+`risk_off_decision(symbol, time, events)` API. It is wired into the v07d2
+paper-live run-once script as **shadow only** (guarded, additive): each refresh
+writes `risk_off_shadow/risk_off_signal_shadow.csv` recording which live CIC long
+signals *would* be suppressed, accruing the gate's would-be decisions for future
+paper-live validation. No paper trade is changed.
+
 ## Reproduction
 
 ```
-pressure-graph run-v12s2-risk-off --config configs/v0_3.yaml
+pressure-graph run-v12s2-risk-off --config configs/v0_3.yaml   # research overlay + sweep
+python scripts/v07d2_live_once.py                              # writes risk_off shadow CSV
 ```
 
 Requires the v0.3 feature parquet and the v0.9D capacity trade cache. Outputs in
-`reports/v1_2s2_long_risk_off_overlay/`: overlay_summary, risk_off_events,
-breadth_timeline, candidate_notes.md. 113 tests green on the clean box.
+`reports/v1_2s2_long_risk_off_overlay/`: overlay_summary, cooldown_sweep,
+risk_off_events, breadth_timeline, candidate_notes.md. 120 tests green on the box.
 
-No paper-live / real-live permission changes.
+No paper-live / real-live permission changes — the live wiring is shadow-only.
 

@@ -107,6 +107,18 @@ def main() -> None:
     for name, path in s2_outputs.items():
         print(f"s2.{name}: {path}")
 
+    # v1.2s2 long risk-off gate, SHADOW ONLY: records would-be suppressions next to
+    # the live report and changes no paper trade. Guarded so it can never break the
+    # primary refresh.
+    try:
+        from pressure_graph.live.risk_off_gate import write_risk_off_shadow
+
+        risk_off_outputs = write_risk_off_shadow(prepared, Path(REPORT_ROOT) / "risk_off_shadow")
+        for name, path in risk_off_outputs.items():
+            print(f"risk_off.{name}: {path}")
+    except Exception as exc:  # noqa: BLE001 - shadow must never affect the live refresh
+        print(f"risk_off shadow skipped: {exc}")
+
 
 if __name__ == "__main__":
     main()

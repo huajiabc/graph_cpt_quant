@@ -97,3 +97,21 @@ def test_mode_metrics_reports_gated_realized_net():
     assert metrics["longs_gated"] == 1
     assert metrics["gated_realized_net_mean"] == -0.05  # removed the loser
     assert metrics["gated_loss_share"] == 1.0
+
+
+def test_half_size_actually_scales_selected_gated_long():
+    # A single selected gated long: half-size must halve its contribution, so the
+    # half-size portfolio net must differ from the un-gated baseline. (Regression:
+    # a leading-underscore marker column was silently dropped by itertuples.)
+    pool = _pool(
+        [
+            {"symbol": "AAAUSDT", "signal_time": "2026-01-01 10:00", "entry_time": "2026-01-01 10:15",
+             "exit_time": "2026-01-01 14:00", "net_return": 0.08, "holding_minutes": 225.0, "month": "2026-01"},
+        ]
+    )
+    gated = pd.Series([True])
+    baseline = _mode_metrics(pool, pd.Series([False]), "baseline", max_positions=8)
+    half = _mode_metrics(pool, gated, "symbol_half_size", max_positions=8, half_size=True, half_size_factor=0.5)
+    assert half["longs_gated"] == 1
+    assert abs(half["portfolio_net20"] - 0.5 * baseline["portfolio_net20"]) < 1e-9
+    assert half["portfolio_net20"] < baseline["portfolio_net20"]
