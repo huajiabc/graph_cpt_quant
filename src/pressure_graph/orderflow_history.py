@@ -27,6 +27,7 @@ capacity decision made at entry_time.
 from __future__ import annotations
 
 import json
+import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -127,12 +128,21 @@ def binance_symbol_candidates(bybit_symbol: str, extra_aliases: dict[str, str] |
     return list(dict.fromkeys(candidates))
 
 
+TRANSIENT_DOWNLOAD_ATTEMPTS = 4
+TRANSIENT_RETRY_SLEEP_SECONDS = 2.0
+
+
 def download_aggtrades_day(
     binance_symbol: str,
     day: date,
     cfg: OrderflowHistoryConfig,
 ) -> Path | None:
-    """Download one daily zip. Returns the cached path, or None on 404."""
+    """Download one daily zip. Returns the cached path, or None on 404.
+
+    Transient transport failures (resets, timeouts, 5xx) are retried with
+    backoff and re-raised only after the final attempt; genuine 404s are
+    cached via a .missing marker so re-runs skip them.
+    """
     path = aggtrades_zip_path(cfg.history_root, binance_symbol, day)
     if path.exists() and path.stat().st_size > 0:
         return path
@@ -144,14 +154,24 @@ def download_aggtrades_day(
         aggtrades_daily_url(binance_symbol, day),
         headers={"User-Agent": "pressure-graph/0.1 orderflow-history"},
     )
-    try:
-        with urlopen(request, timeout=cfg.timeout_seconds) as response:
-            payload = response.read()
-    except HTTPError as exc:
-        if exc.code == 404:
-            miss_marker.write_text("404", encoding="utf-8")
-            return None
-        raise
+    payload: bytes | None = None
+    for attempt in range(TRANSIENT_DOWNLOAD_ATTEMPTS):
+        try:
+            with urlopen(request, timeout=cfg.timeout_seconds) as response:
+                payload = response.read()
+            break
+        except HTTPError as exc:
+            if exc.code == 404:
+                miss_marker.write_text("404", encoding="utf-8")
+                return None
+            if attempt == TRANSIENT_DOWNLOAD_ATTEMPTS - 1:
+                raise
+        except (URLError, TimeoutError, OSError):
+            if attempt == TRANSIENT_DOWNLOAD_ATTEMPTS - 1:
+                raise
+        time.sleep(TRANSIENT_RETRY_SLEEP_SECONDS * (2**attempt))
+    if payload is None:
+        return None
     tmp_path = path.with_suffix(".zip.part")
     tmp_path.write_bytes(payload)
     tmp_path.replace(path)
@@ -281,23 +301,33 @@ def resolve_binance_symbol(
     probe_days: list[date],
     cfg: OrderflowHistoryConfig,
     symbol_map: dict[str, str],
-) -> str | None:
-    """Resolve and cache the Binance UM symbol for a Bybit symbol via archive probes."""
+) -> tuple[str | None, bool]:
+    """Resolve the Binance UM symbol via archive probes.
+
+    Returns (symbol, definitive). ``(None, True)`` means every probe came back
+    as a clean 404 (cache as unlisted); ``(None, False)`` means a transient
+    transport failure left the symbol undetermined — it is NOT cached so the
+    next run retries it.
+    """
     cached = symbol_map.get(bybit_symbol)
     if cached is not None:
-        return cached or None
+        return (cached or None, True)
+    definitive = True
     for candidate in binance_symbol_candidates(bybit_symbol, cfg.extra_aliases):
         for day in probe_days:
             try:
-                path = download_aggtrades_day(candidate, day, cfg)
+                if download_aggtrades_day(candidate, day, cfg) is not None:
+                    symbol_map[bybit_symbol] = candidate
+                    return (candidate, True)
             except (HTTPError, URLError, TimeoutError, OSError) as exc:
-                print(f"[orderflow-history] probe failed {candidate} {day}: {exc}", flush=True)
-                continue
-            if path is not None:
-                symbol_map[bybit_symbol] = candidate
-                return candidate
-    symbol_map[bybit_symbol] = ""
-    return None
+                definitive = False
+                print(
+                    f"[orderflow-history] probe failed {candidate} {day}: {exc}",
+                    flush=True,
+                )
+    if definitive:
+        symbol_map[bybit_symbol] = ""
+    return (None, definitive)
 
 
 def _symbol_map_path(cfg: OrderflowHistoryConfig) -> Path:
@@ -356,12 +386,13 @@ def build_event_orderflow(
             day_set.update(_event_day_span(event))
         days = sorted(day_set)
         probe_days = [days[len(days) // 2], days[0], days[-1]]
-        binance_symbol = resolve_binance_symbol(str(symbol), probe_days, cfg, symbol_map)
+        binance_symbol, definitive = resolve_binance_symbol(str(symbol), probe_days, cfg, symbol_map)
         if binance_symbol is None:
+            status = "unlisted" if definitive else "resolve_failed"
             for _, event in group.iterrows():
-                rows.append(_unmapped_row(event))
+                rows.append(_unmapped_row(event, status))
             print(
-                f"[orderflow-history] {symbol_idx}/{len(grouped)} {symbol}: no Binance UM listing",
+                f"[orderflow-history] {symbol_idx}/{len(grouped)} {symbol}: {status}",
                 flush=True,
             )
             continue
@@ -386,7 +417,7 @@ def build_event_orderflow(
     return pd.DataFrame(rows)
 
 
-def _unmapped_row(event: pd.Series) -> dict[str, object]:
+def _unmapped_row(event: pd.Series, status: str = "unlisted") -> dict[str, object]:
     row = {
         "signal_id": event["signal_id"],
         "exchange": event["exchange"],
@@ -395,12 +426,12 @@ def _unmapped_row(event: pd.Series) -> dict[str, object]:
         "signal_time": event["signal_time"],
         "entry_time": event["entry_time"],
         "binance_symbol": "",
-        "mapping_status": "unlisted",
+        "mapping_status": status,
     }
     for window in EVENT_WINDOWS:
         row[f"{window}_covered"] = False
         row[f"{window}_coverage_ratio"] = 0.0
-        row[f"{window}_source_quality"] = "unlisted"
+        row[f"{window}_source_quality"] = status
     return row
 
 
