@@ -56,11 +56,17 @@ from pressure_graph.pipeline import (
     run_v10c_burst_phase_allocation_from_features,
     run_v10d_late_burst_overflow_from_features,
     run_v10_short_mirror_failure_from_features,
+    run_v11_orderflow_burst_ranking_from_features,
     run_v06a_reclaim_alpha_from_features,
 )
 from pressure_graph.reports.v06a1 import load_v06a1_config
 from pressure_graph.reports.v06a2 import load_v06a2_config
 from pressure_graph.orderflow import OrderflowRunConfig, write_v08_orderflow_shadow
+from pressure_graph.orderflow_history import (
+    DEFAULT_CANDIDATES,
+    OrderflowHistoryConfig,
+    write_cic_event_orderflow,
+)
 from pressure_graph.orderbook import OrderbookRunConfig, write_v085_orderbook_snapshot
 
 
@@ -771,6 +777,43 @@ def run_v10d_late_overflow(
 ) -> None:
     cfg = load_config(config)
     outputs = run_v10d_late_burst_overflow_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("collect-orderflow-history")
+def collect_orderflow_history(
+    trade_cache: Path = typer.Option(
+        Path("reports/v0_9d_cic_capacity_architecture/capacity_trade_cache.parquet"),
+        help="v0.9D capacity trade cache parquet.",
+    ),
+    candidates: str = typer.Option(
+        ",".join(DEFAULT_CANDIDATES),
+        help="Comma-separated candidate names to backfill.",
+    ),
+    workers: int = typer.Option(8, help="Parallel archive download workers."),
+    max_events: int | None = typer.Option(None, help="Cap events for smoke runs."),
+) -> None:
+    """Backfill historical event-window orderflow from Binance UM aggTrades archives."""
+    candidate_tuple = tuple(item.strip() for item in candidates.split(",") if item.strip())
+    cfg = OrderflowHistoryConfig(
+        trade_cache_path=trade_cache,
+        candidates=candidate_tuple or DEFAULT_CANDIDATES,
+        download_workers=workers,
+        max_events=max_events,
+    )
+    outputs = write_cic_event_orderflow(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v11-orderflow-ranking")
+def run_v11_orderflow_ranking(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """Selected-vs-skipped orderflow ranking experiment over the CIC burst pool."""
+    cfg = load_config(config)
+    outputs = run_v11_orderflow_burst_ranking_from_features(cfg)
     for name, path in outputs.items():
         typer.echo(f"{name}: {path}")
 

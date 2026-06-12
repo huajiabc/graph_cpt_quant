@@ -54,11 +54,19 @@ from pressure_graph.reports.v09e1 import V09E1Config, run_historical_orderbook_r
 from pressure_graph.reports.v09e2 import V09E2Config, run_v09e2_upside_vacuum_validation
 from pressure_graph.reports.v09d import write_v09d_cic_capacity_architecture
 from pressure_graph.reports.v09d1 import write_v09d1_burst_capacity_execution
-from pressure_graph.reports.v10a_cic_basket_portfolio import write_v10a_cic_basket_portfolio
+from pressure_graph.reports.v10a_cic_basket_portfolio import (
+    V10AConfig,
+    _load_or_build_trades,
+    write_v10a_cic_basket_portfolio,
+)
 from pressure_graph.reports.v10b_slot_turnover_attribution import write_v10b_slot_turnover_attribution
 from pressure_graph.reports.v10c_burst_phase_allocation import write_v10c_burst_phase_allocation
 from pressure_graph.reports.v10d_late_burst_overflow import write_v10d_late_burst_overflow
 from pressure_graph.reports.v10_short_mirror import write_v10_short_mirror_failure
+from pressure_graph.reports.v11_orderflow_burst_ranking import (
+    V11Config,
+    write_v11_orderflow_burst_ranking,
+)
 from pressure_graph.paper_live import (
     write_v05_paper_live,
     write_v06a3_paper_live,
@@ -548,6 +556,19 @@ def run_v10d_late_burst_overflow_from_features(config: ExperimentConfig) -> dict
     features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
     instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
     return write_v10d_late_burst_overflow(features_path, instruments, config)
+
+
+def run_v11_orderflow_burst_ranking_from_features(
+    config: ExperimentConfig,
+    v11_config: V11Config | None = None,
+) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    v10a_cfg = V10AConfig()
+    trades = _load_or_build_trades(
+        features_path, instruments, config, ensure_dir(v10a_cfg.v09d_root), v10a_cfg
+    )
+    return write_v11_orderflow_burst_ranking(trades, v11_config or V11Config())
 
 
 def run_v10_short_mirror_failure_from_features(config: ExperimentConfig) -> dict[str, Path]:

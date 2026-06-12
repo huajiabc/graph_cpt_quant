@@ -243,6 +243,9 @@ def summarize_trade_window(
     start: pd.Timestamp | None,
     end: pd.Timestamp | None,
     large_trade_quantile: float = 0.95,
+    *,
+    assume_normalized: bool = False,
+    large_trade_threshold: float | None = None,
 ) -> dict[str, object]:
     if start is None or end is None or pd.isna(start) or pd.isna(end):
         return _empty_window_stats(start, end)
@@ -252,7 +255,7 @@ def summarize_trade_window(
         end = start + pd.Timedelta(minutes=1)
     if trades.empty:
         return _empty_window_stats(start, end)
-    data = normalize_trade_frame(trades)
+    data = trades if assume_normalized else normalize_trade_frame(trades)
     coverage_ratio = _coverage_ratio(data, start, end)
     cache_start = data["timestamp"].min() if not data.empty else pd.NaT
     cache_end = data["timestamp"].max() if not data.empty else pd.NaT
@@ -271,7 +274,10 @@ def summarize_trade_window(
     side = sample["side"].str.lower()
     is_buy = side.eq("buy")
     is_sell = side.eq("sell")
-    threshold = float(data["turnover"].quantile(large_trade_quantile))
+    if large_trade_threshold is not None and np.isfinite(large_trade_threshold):
+        threshold = float(large_trade_threshold)
+    else:
+        threshold = float(data["turnover"].quantile(large_trade_quantile))
     large = sample["turnover"] >= threshold
     turnover = float(sample["turnover"].sum())
     buy_turnover = float(sample.loc[is_buy, "turnover"].sum())
