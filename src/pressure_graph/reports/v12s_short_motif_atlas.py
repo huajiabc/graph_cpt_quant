@@ -28,7 +28,7 @@ guards.
 from __future__ import annotations
 
 import zlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -36,7 +36,6 @@ import pandas as pd
 
 from pressure_graph.backtest.short_execution import (
     ShortExitRule,
-    short_net_return,
     simulate_short_exit,
 )
 from pressure_graph.config import ExperimentConfig

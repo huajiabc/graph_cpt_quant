@@ -8,7 +8,6 @@ from pressure_graph.reports.v12s3_current_stack_risk_off_overlay import (
     CURRENT_LONG_STACK,
     CurrentStackConfig,
     O6_POLICY,
-    StackPiece,
     _attribute_suppressed_trades,
     _empty_metrics,
     _overflow_mode_metrics,

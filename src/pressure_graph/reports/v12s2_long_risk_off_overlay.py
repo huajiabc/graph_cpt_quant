@@ -39,7 +39,6 @@ from pressure_graph.reports.v10a_cic_basket_portfolio import _focus_pool, _portf
 from pressure_graph.reports.v12s_short_motif_atlas import (
     DETECTORS,
     MOTIF_PARAMS,
-    ShortAtlasConfig,
 )
 
 REPORT_ROOT = Path("reports/v1_2s2_long_risk_off_overlay")
@@ -59,7 +58,7 @@ class RiskOffConfig:
     trade_cache_path: Path = TRADE_CACHE_PATH
     top_n: int = 30
     motifs: tuple[str, ...] = ("S1", "S3", "S5")
-    symbol_cooldown_bars: int = 32  # 8h: a recent failure suppresses new longs here.
+    symbol_cooldown_bars: int = 48  # 12h: v1.2s3 validated shadow cooldown.
     breadth_window_bars: int = 16  # 4h trailing window for market breadth.
     breadth_threshold: int = 3  # distinct symbols failing -> market risk-off.
     max_positions_grid: tuple[int, ...] = (5, 8, 10)
@@ -76,7 +75,6 @@ def stream_risk_off_events(
     cfg: RiskOffConfig,
 ) -> pd.DataFrame:
     """Per-symbol failure-motif confirmation times (feature_time of the confirm bar)."""
-    atlas_cfg = ShortAtlasConfig(top_n=cfg.top_n, motifs=cfg.motifs)
     rows: list[dict[str, object]] = []
     for idx, symbol in enumerate(symbols, start=1):
         data = _read_symbol_features(feature_path, rank30, rank90, symbol, config)
@@ -212,7 +210,6 @@ def _mode_metrics(
         max_positions=max_positions,
         notes="",
     )
-    net = pd.to_numeric(selected.get("net_return", pd.Series(dtype=float)), errors="coerce")
     removed_net = pd.to_numeric(removed.get("net_return", pd.Series(dtype=float)), errors="coerce")
     dd = float(metrics.get("max_drawdown_proxy", np.nan))
     portfolio_net = float(metrics.get("portfolio_net20", np.nan))

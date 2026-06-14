@@ -36,7 +36,7 @@ LONG_GATE_COLUMNS = {
 @dataclass(frozen=True)
 class RiskOffGateConfig:
     motifs: tuple[str, ...] = ("S1", "S3", "S5")
-    symbol_cooldown_bars: int = 32  # 8h, the v1.2s2 default.
+    symbol_cooldown_bars: int = 48  # 12h, the v1.2s3 validated shadow default.
     top_n: int = 30
 
 

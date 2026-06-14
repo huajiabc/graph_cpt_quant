@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 from pressure_graph.reports.v12s2_long_risk_off_overlay import (
