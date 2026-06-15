@@ -60,6 +60,8 @@ from pressure_graph.pipeline import (
     run_v12s_short_motif_atlas_from_features,
     run_v12s2_long_risk_off_overlay_from_features,
     run_v12s3_current_stack_risk_off_from_features,
+    run_v3_3_failure_path_search_from_features,
+    run_v3_4_true_short_sleeve_from_features,
     run_v06a_reclaim_alpha_from_features,
 )
 from pressure_graph.reports.v06a1 import load_v06a1_config
@@ -866,6 +868,33 @@ def run_v12s3_current_stack_risk_off(
     """Phase-4 finish: replay the symbol risk-off gate against the current long stack (research only)."""
     cfg = load_config(config)
     outputs = run_v12s3_current_stack_risk_off_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v3-4-true-short-sleeve")
+def run_v3_4_true_short_sleeve(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """v3.4 true short sleeve research: SS1A..SS3B + 3-action compare + hedge (research only)."""
+    cfg = load_config(config)
+    outputs = run_v3_4_true_short_sleeve_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v3-3-failure-path-search")
+def run_v3_3_failure_path_search(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+    synthetic: bool = typer.Option(
+        False,
+        "--synthetic/--real",
+        help="Force the synthetic fitness path (useful when the trade cache is missing).",
+    ),
+) -> None:
+    """v3.3 ACO+GA+SA meta-search over the v1.2s3 long risk-off stack (research only)."""
+    cfg = load_config(config)
+    outputs = run_v3_3_failure_path_search_from_features(cfg, use_synthetic_fitness=synthetic)
     for name, path in outputs.items():
         typer.echo(f"{name}: {path}")
 

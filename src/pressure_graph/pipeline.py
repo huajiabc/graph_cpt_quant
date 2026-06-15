@@ -79,6 +79,14 @@ from pressure_graph.reports.v12s3_current_stack_risk_off_overlay import (
     CurrentStackConfig,
     write_v12s3_current_stack_risk_off,
 )
+from pressure_graph.reports.v3_3_failure_path_search import (
+    V33Config,
+    write_v3_3_failure_path_search,
+)
+from pressure_graph.reports.v3_4_true_short_sleeve import (
+    V34Config,
+    write_v3_4_true_short_sleeve,
+)
 from pressure_graph.paper_live import (
     write_v05_paper_live,
     write_v06a3_paper_live,
@@ -632,6 +640,40 @@ def run_v12s3_current_stack_risk_off_from_features(
     instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
     return write_v12s3_current_stack_risk_off(
         features_path, instruments, config, stack_config or CurrentStackConfig()
+    )
+
+
+def run_v3_4_true_short_sleeve_from_features(
+    config: ExperimentConfig,
+    sleeve_config: V34Config | None = None,
+) -> dict[str, Path]:
+    """v3.4 true-short-sleeve research line (SS1A..SS3B + Fast/Swing + 3-action)."""
+    features_path = (
+        config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    )
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v3_4_true_short_sleeve(
+        features_path, instruments, config, sleeve_config or V34Config()
+    )
+
+
+def run_v3_3_failure_path_search_from_features(
+    config: ExperimentConfig,
+    v33_config: V33Config | None = None,
+    *,
+    use_synthetic_fitness: bool = False,
+) -> dict[str, Path]:
+    """v3.3 ACO + GA + SA meta-search over the v1.2s3 long risk-off stack."""
+    features_path = (
+        config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    )
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v3_3_failure_path_search(
+        features_path,
+        instruments,
+        config,
+        v33_config or V33Config(),
+        use_synthetic_fitness=use_synthetic_fitness,
     )
 
 
