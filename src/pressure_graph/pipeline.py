@@ -79,6 +79,34 @@ from pressure_graph.reports.v12s3_current_stack_risk_off_overlay import (
     CurrentStackConfig,
     write_v12s3_current_stack_risk_off,
 )
+from pressure_graph.reports.v11r_portfolio_risk_envelope import write_v11r_portfolio_risk_envelope
+from pressure_graph.reports.v12_reclaim_microstructure_quality import write_v12_reclaim_microstructure_quality
+from pressure_graph.reports.v13_post_reclaim_slot_management import write_v13_post_reclaim_slot_management
+from pressure_graph.reports.v13a_checkpoint_robustness import write_v13a_checkpoint_robustness
+from pressure_graph.reports.v13c_cp60_false_exit_attribution import write_v13c_cp60_false_exit_attribution
+from pressure_graph.reports.v13d_cp60_context_protection import write_v13d_cp60_context_protection
+from pressure_graph.reports.v13e_cp60_beta_protection_stability import write_v13e_cp60_beta_protection_stability
+from pressure_graph.reports.v13f_cp60_protect_a_stability import write_v13f_cp60_protect_a_stability
+from pressure_graph.reports.v20_graph_motif_search import write_v20_graph_motif_search
+from pressure_graph.reports.v21a_holdout_autopsy import write_v21a_holdout_autopsy
+from pressure_graph.reports.v21b_state_cluster_atlas import write_v21b_state_cluster_atlas
+from pressure_graph.reports.v21c_state_transition_graph import write_v21c_state_transition_graph
+from pressure_graph.reports.v21d_router_preflight import write_v21d_router_preflight
+from pressure_graph.reports.v21e_walkforward_router_stability import write_v21e_walkforward_router_stability
+from pressure_graph.reports.v21f_state_drift_audit import write_v21f_state_drift_audit
+from pressure_graph.reports.v21g_meta_router_action_labels import write_v21g_meta_router_action_labels
+from pressure_graph.reports.v21h_state_discovery_synthesis import write_v21h_state_discovery_synthesis
+from pressure_graph.reports.v22a_meta_router_dataset_audit import write_v22a_meta_router_dataset_audit
+from pressure_graph.reports.v22b_preentry_meta_router import write_v22b_preentry_meta_router
+from pressure_graph.reports.v22c_walkforward_policy_simulation import write_v22c_walkforward_policy_simulation
+from pressure_graph.reports.v22d_threshold_stability import write_v22d_threshold_stability
+from pressure_graph.reports.v22e_negative_controls import write_v22e_negative_controls
+from pressure_graph.reports.v22f_meta_router_synthesis import write_v22f_meta_router_synthesis
+from pressure_graph.reports.v22g_router_explainability import write_v22g_router_explainability
+from pressure_graph.reports.v23_forward_evaluation import write_v23_forward_evaluation
+from pressure_graph.reports.v30_symbol_risk_off_overlay import write_v30_symbol_risk_off_overlay
+from pressure_graph.reports.v31_failure_position_management import write_v31_failure_position_management
+from pressure_graph.reports.v32_failure_state_atlas import write_v32_failure_state_atlas
 from pressure_graph.paper_live import (
     write_v05_paper_live,
     write_v06a3_paper_live,
@@ -591,6 +619,156 @@ def run_v10d_late_burst_overflow_from_features(config: ExperimentConfig) -> dict
     features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
     instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
     return write_v10d_late_burst_overflow(features_path, instruments, config)
+
+
+def run_v11r_portfolio_risk_envelope_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v11r_portfolio_risk_envelope(features_path, instruments, config)
+
+
+def run_v12_reclaim_microstructure_quality_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v12_reclaim_microstructure_quality(features_path, instruments, config)
+
+
+def run_v13_post_reclaim_slot_management_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v13_post_reclaim_slot_management(features_path, instruments, config)
+
+
+def run_v13a_checkpoint_robustness_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v13a_checkpoint_robustness(features_path, instruments, config)
+
+
+def run_v13c_cp60_false_exit_attribution_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v13c_cp60_false_exit_attribution(features_path, instruments, config)
+
+
+def run_v13d_cp60_context_protection_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v13d_cp60_context_protection(features_path, instruments, config)
+
+
+def run_v13e_cp60_beta_protection_stability_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v13e_cp60_beta_protection_stability(features_path, instruments, config)
+
+
+def run_v13f_cp60_protect_a_stability_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v13f_cp60_protect_a_stability(features_path, instruments, config)
+
+
+def run_v20_graph_motif_search_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v20_graph_motif_search(features_path, instruments, config)
+
+
+def run_v21a_holdout_autopsy_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v21a_holdout_autopsy(features_path, instruments, config)
+
+
+def run_v21b_state_cluster_atlas_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v21b_state_cluster_atlas(features_path, instruments, config)
+
+
+def run_v21c_state_transition_graph_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v21c_state_transition_graph(features_path, instruments, config)
+
+
+def run_v21d_router_preflight_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v21d_router_preflight(features_path, instruments, config)
+
+
+def run_v21e_walkforward_router_stability_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v21e_walkforward_router_stability(features_path, instruments, config)
+
+
+def run_v21f_state_drift_audit_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v21f_state_drift_audit(features_path, instruments, config)
+
+
+def run_v21g_meta_router_action_labels_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v21g_meta_router_action_labels(features_path, instruments, config)
+
+
+def run_v21h_state_discovery_synthesis() -> dict[str, Path]:
+    return write_v21h_state_discovery_synthesis()
+
+
+def run_v22a_meta_router_dataset_audit() -> dict[str, Path]:
+    return write_v22a_meta_router_dataset_audit()
+
+
+def run_v22b_preentry_meta_router() -> dict[str, Path]:
+    return write_v22b_preentry_meta_router()
+
+
+def run_v22c_walkforward_policy_simulation() -> dict[str, Path]:
+    return write_v22c_walkforward_policy_simulation()
+
+
+def run_v22d_threshold_stability() -> dict[str, Path]:
+    return write_v22d_threshold_stability()
+
+
+def run_v22e_negative_controls() -> dict[str, Path]:
+    return write_v22e_negative_controls()
+
+
+def run_v22f_meta_router_synthesis() -> dict[str, Path]:
+    return write_v22f_meta_router_synthesis()
+
+
+def run_v22g_router_explainability() -> dict[str, Path]:
+    return write_v22g_router_explainability()
+
+
+def run_v23_forward_evaluation() -> dict[str, Path]:
+    return write_v23_forward_evaluation()
+
+
+def run_v30_symbol_risk_off_overlay_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v30_symbol_risk_off_overlay(features_path, instruments, config)
+
+
+def run_v31_failure_position_management_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v31_failure_position_management(features_path, instruments, config)
+
+
+def run_v32_failure_state_atlas_from_features(config: ExperimentConfig) -> dict[str, Path]:
+    features_path = config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v32_failure_state_atlas(features_path, instruments, config)
 
 
 def run_v11_orderflow_burst_ranking_from_features(

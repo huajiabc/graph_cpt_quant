@@ -11,6 +11,15 @@ from pressure_graph.config.v07a2 import V07A2Config
 from pressure_graph.io import ensure_dir, write_parquet
 from pressure_graph.reports.v09a import REPORT_ROOT as V09A_REPORT_ROOT
 from pressure_graph.reports.v09a import add_cluster_graph_features
+from pressure_graph.reports.v22b_preentry_meta_router import (
+    V21G_ROOT as V22_ROUTER_TRAIN_ROOT,
+    V22BConfig,
+    _feature_columns as _router_feature_columns,
+    _fit_logistic as _router_fit_logistic,
+    _predict_logistic as _router_predict_logistic,
+    _read_csv as _router_read_csv,
+    _train_ready as _router_train_ready,
+)
 from pressure_graph.paper_live.v07a2 import (
     _append_decision_log,
     _daily_summary,
@@ -32,6 +41,19 @@ from pressure_graph.paper_live.v07a2 import (
 REPORT_ROOT = Path("reports/v0_7d2_cic_mir1_paper_live")
 PAPER_DATA_ROOT = Path("data/paper/v0_7d2")
 OVERFLOW_PORTFOLIO_ID = "P2_MAX8_PLUS_O6_LATE_BURST_OVERFLOW"
+CHECKPOINT_PORTFOLIO_IDS = {
+    "S0": "P2_MAX8_BASELINE",
+    "S1": "P2_MAX8_PLUS_O6",
+    "S2": "P2_MAX8_CP60",
+    "S3": "P2_MAX8_CP60_PLUS_O6",
+    "S4": "P2_MAX8_CP60_PROTECT_A_CAP2",
+    "S5": "P2_MAX8_CP60_PROTECT_A_CAP2_PLUS_O6",
+}
+CHECKPOINT_MINUTES = 60
+CHECKPOINT_TRIGGER_COST_BPS = 20
+CP60_PROTECT_A_BETA_HIGH_THRESHOLD = 99.97866821289062
+CP60_PROTECT_A_CAP_PER_BURST = 2
+PRE_ENTRY_ROUTER_THRESHOLDS = (0.70, 0.75, 0.80)
 SHADOW_PORTFOLIOS = [
     {
         "portfolio_id": "P0_CIC1_CLUSTER_RANK_MAX5",
@@ -276,6 +298,152 @@ def _add_shadow_burst_phase(pool: pd.DataFrame, window: str = "1h") -> pd.DataFr
     out["asof_phase_passed"] = True
     out["uses_final_burst_size_for_decision"] = False
     return out
+
+
+def _p2_combined_spec() -> dict[str, object]:
+    for spec in SHADOW_PORTFOLIOS:
+        if spec.get("portfolio_id") == "P2_CIC_COMBINED_BASKET_MAX8":
+            return spec
+    return {
+        "portfolio_id": "P2_CIC_COMBINED_BASKET_MAX8",
+        "pool": "CIC1_CIC2_COMBINED",
+        "description": "fallback P2 combined basket spec",
+        "candidates": ["CIC1_FILTERED_MIR1", "CIC2_FILTERED_MIR1"],
+        "max_positions": 8,
+        "score_col": "__first_come__",
+    }
+
+
+def _router_live_feature_frame(pool: pd.DataFrame) -> pd.DataFrame:
+    if pool.empty:
+        return pd.DataFrame()
+    data = _add_shadow_burst_phase(pool).copy()
+    entry = pd.to_datetime(data["entry_time"], utc=True, errors="coerce")
+    candidate = data["candidate"].astype(str)
+    cic_type = np.where(candidate.eq("CIC1_FILTERED_MIR1"), "CIC1", "CIC2")
+    out = pd.DataFrame(
+        {
+            "trade_key": data.get("signal_id", data.index.astype(str)).astype(str),
+            "signal_id": data.get("signal_id", data.index.astype(str)).astype(str),
+            "trade_id": data.get("trade_id", data.index.astype(str)).astype(str),
+            "symbol": data["symbol"].astype(str),
+            "candidate": np.where(cic_type == "CIC1", "CIC1_beta_extreme", "CIC2_beta_broad"),
+            "entry_time": entry.astype(str),
+            "entry_month": entry.dt.strftime("%Y-%m"),
+            "period": "live_counterfactual",
+            "meta_router_training_split": "live_counterfactual",
+            "state_cluster_id": "live_unknown",
+            "cic_type": cic_type,
+            "btc_state": data.get("btc_state_at_entry", data.get("btc_state_at_signal", pd.Series("", index=data.index))).astype(str),
+            "market_impulse_density": pd.to_numeric(data.get("volume_impulse_density_at_entry"), errors="coerce"),
+            "cluster_density": pd.to_numeric(data.get("cluster_impulse_density_at_entry"), errors="coerce"),
+            "beta_strength": pd.to_numeric(data.get("beta_extension_score_at_signal"), errors="coerce"),
+            "local_shock_strength": pd.to_numeric(data.get("local_volume_shock_strength_at_signal"), errors="coerce"),
+            "ret_4h": np.nan,
+            "ret_4h_percentile": pd.to_numeric(data.get("beta_extension_score_at_signal"), errors="coerce"),
+            "symbol_volatility_percentile": np.nan,
+            "burst_count_so_far": pd.to_numeric(data.get("burst_count_so_far"), errors="coerce"),
+            "minutes_since_burst_start": pd.to_numeric(data.get("time_since_burst_start_so_far"), errors="coerce"),
+            "same_timestamp_peer_count": entry.groupby(entry).transform("count").astype(float),
+            "walkforward_state_novelty": np.nan,
+            "novelty_bucket": "live_unknown",
+            "actual_net20_later": pd.to_numeric(data.get("net_return_20bp"), errors="coerce"),
+        }
+    )
+    return out
+
+
+def _pre_entry_router_counterfactual_live(
+    trades: pd.DataFrame,
+    *,
+    train_root: Path = V22_ROUTER_TRAIN_ROOT,
+    cfg: V22BConfig = V22BConfig(),
+) -> pd.DataFrame:
+    columns = [
+        "candidate_id",
+        "trade_id",
+        "signal_id",
+        "symbol",
+        "candidate",
+        "feature_time",
+        "entry_time",
+        "router_score_status",
+        "logistic_no_trade_prob",
+        "logistic_no_trade_prob_t70",
+        "logistic_no_trade_prob_t75",
+        "logistic_no_trade_prob_t80",
+        "would_skip_t70",
+        "would_skip_t75",
+        "would_skip_t80",
+        "actual_action",
+        "actual_net20_later",
+        "counterfactual_delta_t70",
+        "counterfactual_delta_t75",
+        "counterfactual_delta_t80",
+        "router_train_events",
+        "router_train_months",
+        "router_train_max_entry_time",
+        "missing_router_features",
+        "notes",
+    ]
+    if trades.empty:
+        return pd.DataFrame(columns=columns)
+    pool = _shadow_trade_pool(trades, _p2_combined_spec())
+    live_features = _router_live_feature_frame(pool)
+    if live_features.empty:
+        return pd.DataFrame(columns=columns)
+
+    training = _router_read_csv(train_root / "meta_router_feature_matrix.csv")
+    if training.empty:
+        out = live_features.copy()
+        out["router_score_status"] = "missing_training_dataset"
+        out["logistic_no_trade_prob"] = np.nan
+        out["missing_router_features"] = ""
+        out["notes"] = "counterfactual_only_no_live_action"
+    else:
+        training["entry_time"] = pd.to_datetime(training["entry_time"], utc=True, errors="coerce")
+        min_live_entry = pd.to_datetime(live_features["entry_time"], utc=True, errors="coerce").min()
+        history = training[training["entry_time"].lt(min_live_entry)].copy() if pd.notna(min_live_entry) else training.copy()
+        feature_cols = _router_feature_columns(training)
+        missing_cols = [col for col in feature_cols if col not in live_features.columns]
+        for col in missing_cols:
+            live_features[col] = np.nan
+        if not _router_train_ready(history, cfg):
+            out = live_features.copy()
+            out["router_score_status"] = "insufficient_prior_training"
+            out["logistic_no_trade_prob"] = np.nan
+        else:
+            model = _router_fit_logistic(history, feature_cols, cfg)
+            out = live_features.copy()
+            out["router_score_status"] = "scored_prior_only_logistic"
+            out["logistic_no_trade_prob"] = _router_predict_logistic(model, live_features)
+        out["missing_router_features"] = ",".join(missing_cols)
+        out["notes"] = "counterfactual_only_no_live_action"
+        out["router_train_events"] = int(len(history))
+        out["router_train_months"] = int(history["entry_month"].nunique()) if "entry_month" in history.columns else 0
+        max_train_time = history["entry_time"].max() if "entry_time" in history.columns and not history.empty else pd.NaT
+        out["router_train_max_entry_time"] = "" if pd.isna(max_train_time) else str(max_train_time)
+
+    for threshold in PRE_ENTRY_ROUTER_THRESHOLDS:
+        suffix = int(round(threshold * 100))
+        out[f"logistic_no_trade_prob_t{suffix}"] = out["logistic_no_trade_prob"]
+        skip = pd.to_numeric(out["logistic_no_trade_prob"], errors="coerce").ge(threshold)
+        out[f"would_skip_t{suffix}"] = skip.fillna(False)
+        out[f"counterfactual_delta_t{suffix}"] = np.where(
+            skip,
+            -pd.to_numeric(out["actual_net20_later"], errors="coerce"),
+            0.0,
+        )
+    out["candidate_id"] = out["signal_id"].astype(str)
+    out["feature_time"] = out["entry_time"]
+    out["actual_action"] = "p2_candidate_observed"
+    if "router_train_events" not in out.columns:
+        out["router_train_events"] = 0
+    if "router_train_months" not in out.columns:
+        out["router_train_months"] = 0
+    if "router_train_max_entry_time" not in out.columns:
+        out["router_train_max_entry_time"] = ""
+    return out.reindex(columns=columns)
 
 
 def _shadow_payload(row: Any, spec: dict[str, object], *, max_positions: int, concurrent_positions: int) -> dict[str, object]:
@@ -628,6 +796,748 @@ def _overflow_daily_summary(ledger: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _prepared_checkpoint_prices(prepared: pd.DataFrame) -> pd.DataFrame:
+    if prepared.empty:
+        return pd.DataFrame()
+    wanted = ["exchange", "symbol", "feature_time", "bar_open_time", "open", "close"]
+    cols = [col for col in wanted if col in prepared.columns]
+    prices = prepared[cols].copy()
+    prices["feature_time"] = pd.to_datetime(prices.get("feature_time"), utc=True, errors="coerce")
+    if "bar_open_time" in prices.columns:
+        prices["bar_open_time"] = pd.to_datetime(prices["bar_open_time"], utc=True, errors="coerce")
+    else:
+        prices["bar_open_time"] = prices["feature_time"]
+    for col in ("open", "close"):
+        if col in prices.columns:
+            prices[col] = pd.to_numeric(prices[col], errors="coerce")
+    return prices.dropna(subset=["feature_time", "symbol", "open", "close"]).sort_values(["symbol", "feature_time"])
+
+
+def _derive_net_at_cost(frame: pd.DataFrame, cost: int, price_col: str = "exit_price") -> pd.Series:
+    entry = pd.to_numeric(frame.get("entry_price", pd.Series(dtype=float)), errors="coerce")
+    price = pd.to_numeric(frame.get(price_col, pd.Series(dtype=float)), errors="coerce")
+    return price / entry - 1.0 - 2.0 * float(cost) / 10_000.0
+
+
+def _ensure_trade_exit_price(trades: pd.DataFrame) -> pd.DataFrame:
+    out = trades.copy()
+    if "exit_price" not in out.columns:
+        gross = pd.to_numeric(out.get("gross_return"), errors="coerce")
+        entry = pd.to_numeric(out.get("entry_price"), errors="coerce")
+        out["exit_price"] = entry * (1.0 + gross)
+    return out
+
+
+def _attach_checkpoint_prices(
+    pool: pd.DataFrame,
+    prepared: pd.DataFrame,
+    *,
+    checkpoint_minutes: int = CHECKPOINT_MINUTES,
+) -> pd.DataFrame:
+    if pool.empty:
+        return pool.copy()
+    prices = _prepared_checkpoint_prices(prepared)
+    out = _ensure_trade_exit_price(pool).copy()
+    out["entry_time"] = pd.to_datetime(out["entry_time"], utc=True, errors="coerce")
+    out["exit_time"] = pd.to_datetime(out["exit_time"], utc=True, errors="coerce")
+    out["checkpoint_minutes"] = int(checkpoint_minutes)
+    out["checkpoint_time"] = out["entry_time"] + pd.Timedelta(minutes=int(checkpoint_minutes))
+    rows: list[dict[str, object]] = []
+    for symbol, group in out.groupby("symbol", sort=False):
+        symbol_prices = prices[prices["symbol"].astype(str).eq(str(symbol))].sort_values("feature_time")
+        for row in group.sort_values("checkpoint_time").itertuples(index=False):
+            payload = row._asdict()
+            checkpoint = pd.Timestamp(payload["checkpoint_time"])
+            eligible = symbol_prices[symbol_prices["feature_time"].le(checkpoint)]
+            next_bar = symbol_prices[symbol_prices["feature_time"].gt(checkpoint)]
+            if eligible.empty:
+                payload["checkpoint_snapshot_time"] = pd.NaT
+                payload["checkpoint_price"] = np.nan
+            else:
+                last = eligible.iloc[-1]
+                payload["checkpoint_snapshot_time"] = last["feature_time"]
+                payload["checkpoint_price"] = float(last["close"])
+            if next_bar.empty:
+                payload["checkpoint_exit_time"] = pd.NaT
+                payload["checkpoint_exit_price"] = np.nan
+            else:
+                nxt = next_bar.iloc[0]
+                exit_time = nxt["bar_open_time"]
+                if pd.isna(exit_time) or pd.Timestamp(exit_time) < checkpoint:
+                    exit_time = nxt["feature_time"]
+                payload["checkpoint_exit_time"] = exit_time
+                payload["checkpoint_exit_price"] = float(nxt["open"])
+            rows.append(payload)
+    checked = pd.DataFrame(rows)
+    if checked.empty:
+        return out
+    checked["checkpoint_price_covered"] = checked["checkpoint_price"].notna()
+    checked["checkpoint_exit_covered"] = checked["checkpoint_exit_price"].notna()
+    checked["checkpoint_execution_granularity"] = "15m_checkpoint_execution"
+    for cost in (10, 20, 30):
+        checked[f"checkpoint_net{cost}"] = (
+            pd.to_numeric(checked["checkpoint_price"], errors="coerce")
+            / pd.to_numeric(checked["entry_price"], errors="coerce")
+            - 1.0
+            - 2.0 * float(cost) / 10_000.0
+        )
+        checked[f"net_if_checkpoint_exit_{cost}bp"] = _derive_net_at_cost(
+            checked.rename(columns={"checkpoint_exit_price": "_checkpoint_exit_price"}),
+            cost,
+            "_checkpoint_exit_price",
+        )
+    return checked.sort_values(["entry_time", "symbol", "candidate"]).reset_index(drop=True)
+
+
+def _checkpoint_rule(spec: dict[str, object]) -> str:
+    if "checkpoint_rule" in spec:
+        return str(spec["checkpoint_rule"])
+    return "cp60_all" if bool(spec.get("checkpoint_enabled", False)) else "none"
+
+
+def _beta_high_score(frame: pd.DataFrame) -> pd.Series:
+    out = pd.Series(np.nan, index=frame.index, dtype="float64")
+    for col in (
+        "c2_beta_extension_score",
+        "beta_extension_score_at_entry",
+        "beta_extension_score_at_signal",
+        "rank_beta_extreme_strength",
+        "ret_4h_percentile",
+    ):
+        if col not in frame.columns:
+            continue
+        values = pd.to_numeric(frame[col], errors="coerce")
+        out = out.where(out.notna(), values)
+    return out
+
+
+def _protect_a_cap2_mask(out: pd.DataFrame, raw_trigger: pd.Series) -> pd.Series:
+    beta_score = _beta_high_score(out)
+    beta_high = beta_score.ge(CP60_PROTECT_A_BETA_HIGH_THRESHOLD)
+    candidates = out[raw_trigger.fillna(False).astype(bool) & beta_high.fillna(False)].copy()
+    protect = pd.Series(False, index=out.index)
+    if candidates.empty:
+        return protect
+    candidates["_checkpoint_sort"] = pd.to_datetime(candidates["checkpoint_time"], utc=True, errors="coerce")
+    candidates["_entry_sort"] = pd.to_datetime(candidates["entry_time"], utc=True, errors="coerce")
+    sort_cols = ["burst_id", "_checkpoint_sort", "_entry_sort", "symbol"] if "burst_id" in candidates.columns else ["_checkpoint_sort", "_entry_sort", "symbol"]
+    candidates = candidates.sort_values(sort_cols)
+    group_key = "burst_id" if "burst_id" in candidates.columns else pd.Series("unknown", index=candidates.index)
+    keep_idx = candidates.groupby(group_key, sort=False, dropna=False).head(CP60_PROTECT_A_CAP_PER_BURST).index
+    protect.loc[keep_idx] = True
+    return protect
+
+
+def _apply_cp60_effective_exits(pool: pd.DataFrame, *, checkpoint_enabled: bool, checkpoint_rule: str | None = None) -> pd.DataFrame:
+    out = _ensure_trade_exit_price(pool).copy()
+    out["exit_time"] = pd.to_datetime(out["exit_time"], utc=True, errors="coerce")
+    out["checkpoint_time"] = pd.to_datetime(out.get("checkpoint_time"), utc=True, errors="coerce")
+    checkpoint_before_exit = out["checkpoint_time"].lt(out["exit_time"])
+    rule = checkpoint_rule or ("cp60_all" if checkpoint_enabled else "none")
+    raw_trigger = (
+        bool(checkpoint_enabled)
+        & out.get("checkpoint_price_covered", pd.Series(False, index=out.index)).fillna(False).astype(bool)
+        & out.get("checkpoint_exit_covered", pd.Series(False, index=out.index)).fillna(False).astype(bool)
+        & checkpoint_before_exit
+        & pd.to_numeric(out.get("checkpoint_net20"), errors="coerce").le(0.0)
+    )
+    if isinstance(raw_trigger, bool):
+        raw_trigger = pd.Series(False, index=out.index)
+    raw_trigger = raw_trigger.fillna(False).astype(bool)
+    protected = pd.Series(False, index=out.index)
+    if rule == "cp60_protect_a_cap2":
+        protected = _protect_a_cap2_mask(out, raw_trigger)
+    elif rule not in {"none", "cp60_all"}:
+        raise ValueError(f"unsupported checkpoint rule: {rule}")
+    trigger = raw_trigger & ~protected
+    beta_score = _beta_high_score(out)
+    out["checkpoint_enabled"] = bool(checkpoint_enabled)
+    out["checkpoint_rule"] = rule
+    out["cp60_would_exit"] = raw_trigger
+    out["beta_high_protection"] = beta_score.ge(CP60_PROTECT_A_BETA_HIGH_THRESHOLD).fillna(False)
+    out["beta_high_threshold"] = CP60_PROTECT_A_BETA_HIGH_THRESHOLD
+    out["beta_high_score"] = beta_score
+    out["protected_by_beta_high"] = protected.fillna(False).astype(bool)
+    out["protection_cap"] = CP60_PROTECT_A_CAP_PER_BURST if rule == "cp60_protect_a_cap2" else 0
+    out["checkpoint_triggered"] = trigger.fillna(False).astype(bool)
+    if "burst_id" in out.columns:
+        protected_order = (
+            out[out["protected_by_beta_high"]]
+            .sort_values(["burst_id", "checkpoint_time", "entry_time", "symbol"])
+            .groupby("burst_id", sort=False)
+            .cumcount()
+        )
+        out["protected_burst_count_before"] = np.nan
+        out.loc[protected_order.index, "protected_burst_count_before"] = protected_order.astype(float)
+        out["protected_burst_count_after"] = out["protected_burst_count_before"] + 1.0
+    else:
+        out["protected_burst_count_before"] = np.nan
+        out["protected_burst_count_after"] = np.nan
+    out["original_exit_time"] = out["exit_time"]
+    out["original_exit_price"] = out["exit_price"]
+    out["net_if_kept_counterfactual_10bp"] = pd.to_numeric(out.get("net_return_10bp"), errors="coerce")
+    out["net_if_kept_counterfactual_20bp"] = pd.to_numeric(out.get("net_return_20bp"), errors="coerce")
+    out["net_if_kept_counterfactual_30bp"] = pd.to_numeric(out.get("net_return_30bp"), errors="coerce")
+    out["counterfactual_cp60_exit_net20"] = pd.to_numeric(out.get("net_if_checkpoint_exit_20bp"), errors="coerce")
+    out["actual_keep_exit_net20"] = pd.to_numeric(out.get("net_return_20bp"), errors="coerce")
+    out["delta_vs_cp60"] = out["actual_keep_exit_net20"] - out["counterfactual_cp60_exit_net20"]
+    out["slot_blocked_minutes"] = (
+        pd.to_datetime(out["exit_time"], utc=True, errors="coerce")
+        - pd.to_datetime(out["checkpoint_exit_time"], utc=True, errors="coerce")
+    ).dt.total_seconds() / 60.0
+    out.loc[~out["protected_by_beta_high"], "slot_blocked_minutes"] = np.nan
+    out["missed_trade_due_to_protection"] = False
+    out["effective_exit_time"] = out["exit_time"]
+    out["effective_exit_price"] = out["exit_price"]
+    out.loc[out["checkpoint_triggered"], "effective_exit_time"] = out.loc[out["checkpoint_triggered"], "checkpoint_exit_time"]
+    out.loc[out["checkpoint_triggered"], "effective_exit_price"] = out.loc[out["checkpoint_triggered"], "checkpoint_exit_price"]
+    for cost in (10, 20, 30):
+        original = pd.to_numeric(out.get(_net_col(cost)), errors="coerce")
+        cp = pd.to_numeric(out.get(f"net_if_checkpoint_exit_{cost}bp"), errors="coerce")
+        out[f"effective_net_return_{cost}bp"] = original
+        out.loc[out["checkpoint_triggered"], f"effective_net_return_{cost}bp"] = cp
+    return out
+
+
+def _checkpoint_shadow_specs() -> list[dict[str, object]]:
+    return [
+        {
+            "portfolio_id": CHECKPOINT_PORTFOLIO_IDS["S0"],
+            "label": "S0",
+            "checkpoint_enabled": False,
+            "checkpoint_rule": "none",
+            "overflow_enabled": False,
+            "description": "P2 CIC1+CIC2 max8 baseline.",
+        },
+        {
+            "portfolio_id": CHECKPOINT_PORTFOLIO_IDS["S1"],
+            "label": "S1",
+            "checkpoint_enabled": False,
+            "checkpoint_rule": "none",
+            "overflow_enabled": True,
+            "description": "P2 max8 plus O6 late-burst overflow.",
+        },
+        {
+            "portfolio_id": CHECKPOINT_PORTFOLIO_IDS["S2"],
+            "label": "S2",
+            "checkpoint_enabled": True,
+            "checkpoint_rule": "cp60_all",
+            "overflow_enabled": False,
+            "description": "P2 max8 with CP60 no-follow-through checkpoint.",
+        },
+        {
+            "portfolio_id": CHECKPOINT_PORTFOLIO_IDS["S3"],
+            "label": "S3",
+            "checkpoint_enabled": True,
+            "checkpoint_rule": "cp60_all",
+            "overflow_enabled": True,
+            "description": "P2 max8 with CP60 plus O6 late-burst overflow.",
+        },
+        {
+            "portfolio_id": CHECKPOINT_PORTFOLIO_IDS["S4"],
+            "label": "S4",
+            "checkpoint_enabled": True,
+            "checkpoint_rule": "cp60_protect_a_cap2",
+            "overflow_enabled": False,
+            "description": "P2 max8 with CP60 Protect_A beta_high cap2 shadow.",
+        },
+        {
+            "portfolio_id": CHECKPOINT_PORTFOLIO_IDS["S5"],
+            "label": "S5",
+            "checkpoint_enabled": True,
+            "checkpoint_rule": "cp60_protect_a_cap2",
+            "overflow_enabled": True,
+            "description": "P2 max8 with CP60 Protect_A beta_high cap2 plus O6 shadow.",
+        },
+    ]
+
+
+def _checkpoint_payload(row: Any, spec: dict[str, object], *, concurrent: int, core_count: int, overflow_count: int) -> dict[str, object]:
+    payload = row._asdict()
+    payload["portfolio_id"] = spec["portfolio_id"]
+    payload["portfolio_label"] = spec["label"]
+    payload["portfolio_description"] = spec["description"]
+    payload["checkpoint_rule"] = _checkpoint_rule(spec)
+    payload["checkpoint_main_cost_bps"] = CHECKPOINT_TRIGGER_COST_BPS
+    payload["concurrent_positions"] = concurrent
+    payload["core_positions_at_time"] = core_count
+    payload["overflow_positions_at_time"] = overflow_count
+    payload["max_positions_at_time"] = 8
+    payload["is_core"] = True
+    payload["is_overflow"] = False
+    payload["sleeve"] = "core"
+    payload["position_size"] = 1.0
+    payload["extra_exposure"] = 0.0
+    payload["overflow_reason"] = ""
+    payload["overflow_slot_index"] = np.nan
+    payload["selected"] = True
+    payload["skip_reason"] = ""
+    return payload
+
+
+def _checkpoint_overflow_size(row: Any) -> float:
+    candidate = str(getattr(row, "candidate", ""))
+    if candidate == "CIC1_FILTERED_MIR1":
+        return 0.50
+    if candidate == "CIC2_FILTERED_MIR1":
+        return 0.25
+    return 0.0
+
+
+def _select_checkpoint_shadow_portfolio(pool: pd.DataFrame, spec: dict[str, object]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if pool.empty:
+        return pool.copy(), pool.copy()
+    data = _add_shadow_burst_phase(pool)
+    data = _apply_cp60_effective_exits(
+        data,
+        checkpoint_enabled=bool(spec["checkpoint_enabled"]),
+        checkpoint_rule=_checkpoint_rule(spec),
+    )
+    data["rank_score"] = 0.0
+    data["rank_position"] = data.groupby("entry_time", sort=False)["rank_score"].rank(ascending=False, method="first").astype(int)
+    data = data.sort_values(["entry_time", "symbol", "candidate_priority"], ascending=[True, True, False])
+    active_core: list[tuple[pd.Timestamp, str]] = []
+    active_overflow: list[tuple[pd.Timestamp, str]] = []
+    selected_rows: list[dict[str, object]] = []
+    skipped_rows: list[dict[str, object]] = []
+    overflow_enabled = bool(spec["overflow_enabled"])
+    for row in data.itertuples(index=False):
+        entry = pd.Timestamp(row.entry_time)
+        active_core = [(exit_time, symbol) for exit_time, symbol in active_core if exit_time > entry]
+        active_overflow = [(exit_time, symbol) for exit_time, symbol in active_overflow if exit_time > entry]
+        active_symbols = {symbol for _, symbol in [*active_core, *active_overflow]}
+        payload = _checkpoint_payload(
+            row,
+            spec,
+            concurrent=len(active_core) + len(active_overflow),
+            core_count=len(active_core),
+            overflow_count=len(active_overflow),
+        )
+        if str(row.symbol) in active_symbols:
+            payload["selected"] = False
+            payload["skip_reason"] = "symbol_already_active"
+            skipped_rows.append(payload)
+            continue
+        if len(active_core) < 8:
+            selected_rows.append(payload)
+            active_core.append((pd.Timestamp(row.effective_exit_time), str(row.symbol)))
+            continue
+        overflow_size = _checkpoint_overflow_size(row)
+        overflow_eligible = overflow_enabled and int(getattr(row, "burst_count_so_far", 0)) >= 9 and overflow_size > 0
+        if overflow_eligible and len(active_overflow) < 4:
+            payload["is_core"] = False
+            payload["is_overflow"] = True
+            payload["sleeve"] = "overflow"
+            payload["position_size"] = overflow_size
+            payload["extra_exposure"] = overflow_size
+            payload["overflow_reason"] = "portfolio_full_late_burst_overflow"
+            payload["overflow_slot_index"] = len(active_overflow) + 1
+            selected_rows.append(payload)
+            active_overflow.append((pd.Timestamp(row.effective_exit_time), str(row.symbol)))
+            continue
+        payload["selected"] = False
+        payload["skip_reason"] = (
+            "overflow_full" if overflow_eligible else "portfolio_full_not_overflow_eligible"
+        )
+        skipped_rows.append(payload)
+    return pd.DataFrame(selected_rows), pd.DataFrame(skipped_rows)
+
+
+def _checkpoint_trade_pool(trades: pd.DataFrame, prepared: pd.DataFrame) -> pd.DataFrame:
+    spec = {
+        "candidates": ["CIC1_FILTERED_MIR1", "CIC2_FILTERED_MIR1"],
+        "pool": "CIC1_CIC2_COMBINED",
+    }
+    pool = _shadow_trade_pool(trades, spec)
+    if pool.empty:
+        return pool
+    return _attach_checkpoint_prices(pool, prepared, checkpoint_minutes=CHECKPOINT_MINUTES)
+
+
+def checkpoint_shadow_live(
+    trades: pd.DataFrame,
+    prepared: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    pool = _checkpoint_trade_pool(trades, prepared)
+    ledgers: list[pd.DataFrame] = []
+    skipped_frames: list[pd.DataFrame] = []
+    summary_rows: list[dict[str, object]] = []
+    daily_rows: list[dict[str, object]] = []
+    status_rows: list[dict[str, object]] = []
+    for spec in _checkpoint_shadow_specs():
+        selected, skipped = _select_checkpoint_shadow_portfolio(pool, spec)
+        for frame, selected_flag in ((selected, True), (skipped, False)):
+            if frame.empty:
+                continue
+            frame = frame.copy()
+            frame["selected"] = selected_flag
+            for cost in (10, 20, 30):
+                frame[f"net{cost}_if_taken"] = pd.to_numeric(frame.get(f"effective_net_return_{cost}bp"), errors="coerce")
+            if selected_flag:
+                ledgers.append(frame)
+            else:
+                skipped_frames.append(frame)
+        for cost in (10, 20, 30):
+            summary_rows.append(_checkpoint_summary_row(str(spec["portfolio_id"]), selected, skipped, cost=cost))
+        date_sources = [
+            frame["entry_time"]
+            for frame in (selected, skipped)
+            if not frame.empty and "entry_time" in frame.columns
+        ]
+        date_values = (
+            pd.to_datetime(pd.concat(date_sources), utc=True, errors="coerce").dt.date.dropna().unique()
+            if date_sources
+            else []
+        )
+        for day in sorted(date_values):
+            sel_day = selected[pd.to_datetime(selected.get("entry_time"), utc=True, errors="coerce").dt.date.eq(day)] if not selected.empty else selected
+            skip_day = skipped[pd.to_datetime(skipped.get("entry_time"), utc=True, errors="coerce").dt.date.eq(day)] if not skipped.empty else skipped
+            row = _checkpoint_summary_row(str(spec["portfolio_id"]), sel_day, skip_day, cost=20)
+            row["date"] = day
+            daily_rows.append(row)
+        early_exits = int(selected.get("checkpoint_triggered", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()) if not selected.empty else 0
+        protected_exits = int(selected.get("protected_by_beta_high", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()) if not selected.empty else 0
+        cp60_would_exits = int(selected.get("cp60_would_exit", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()) if not selected.empty else 0
+        eval_count = protected_exits if _checkpoint_rule(spec) == "cp60_protect_a_cap2" else early_exits
+        if eval_count < 10 and _checkpoint_rule(spec) == "cp60_protect_a_cap2":
+            sample_status = "system_check_only"
+            evaluation_status = "no_decision"
+        elif eval_count < 20:
+            sample_status = "system_check_only"
+            evaluation_status = "no_decision"
+        elif eval_count < 50:
+            sample_status = "behavior_check"
+            evaluation_status = "no_upgrade_no_downgrade"
+        elif eval_count < 100:
+            sample_status = "initial_checkpoint_evaluation"
+            evaluation_status = "evaluate_shadow_only"
+        else:
+            sample_status = "candidate_check"
+            evaluation_status = "consider_shadow_upgrade"
+        status_rows.append(
+            {
+                "portfolio_id": spec["portfolio_id"],
+                "label": spec["label"],
+                "checkpoint_enabled": bool(spec["checkpoint_enabled"]),
+                "overflow_enabled": bool(spec["overflow_enabled"]),
+                "selected_trades": int(len(selected)),
+                "skipped_candidates": int(len(skipped)),
+                "checkpoint_exits": early_exits,
+                "cp60_would_exits": cp60_would_exits,
+                "protected_exits": protected_exits,
+                "protection_cap": CP60_PROTECT_A_CAP_PER_BURST
+                if _checkpoint_rule(spec) == "cp60_protect_a_cap2"
+                else 0,
+                "beta_high_threshold": CP60_PROTECT_A_BETA_HIGH_THRESHOLD
+                if _checkpoint_rule(spec) == "cp60_protect_a_cap2"
+                else np.nan,
+                "sample_status": sample_status,
+                "evaluation_status": evaluation_status,
+                "real_live_allowed": False,
+            }
+        )
+    ledger = pd.concat(ledgers, ignore_index=True) if ledgers else pd.DataFrame()
+    skipped_all = pd.concat(skipped_frames, ignore_index=True) if skipped_frames else pd.DataFrame()
+    summary = pd.DataFrame(summary_rows)
+    daily = pd.DataFrame(daily_rows)
+    status = pd.DataFrame(status_rows)
+    slot = _slot_release_attribution_live(ledger)
+    return status, ledger, skipped_all, daily, summary, slot
+
+
+def _effective_net_col(cost: int) -> str:
+    return f"effective_net_return_{cost}bp"
+
+
+def _checkpoint_summary_row(portfolio_id: str, selected: pd.DataFrame, skipped: pd.DataFrame, *, cost: int) -> dict[str, object]:
+    if cost == 50:
+        selected_net = pd.to_numeric(selected.get("net_return_50bp", pd.Series(dtype=float)), errors="coerce")
+        skipped_net = pd.to_numeric(skipped.get("net_return_50bp", pd.Series(dtype=float)), errors="coerce")
+    else:
+        selected_net = pd.to_numeric(selected.get(_effective_net_col(cost), pd.Series(dtype=float)), errors="coerce")
+        skipped_net = pd.to_numeric(skipped.get(_effective_net_col(cost), pd.Series(dtype=float)), errors="coerce")
+    weights = pd.to_numeric(selected.get("position_size", pd.Series(1.0, index=selected.index)), errors="coerce").fillna(1.0)
+    weighted_sum = float((selected_net * weights).sum()) if len(selected_net) else 0.0
+    core = selected[selected.get("is_core", pd.Series(dtype=bool)).fillna(False).astype(bool)] if not selected.empty else selected
+    overflow = selected[selected.get("is_overflow", pd.Series(dtype=bool)).fillna(False).astype(bool)] if not selected.empty else selected
+    overflow_weights = pd.to_numeric(overflow.get("position_size", pd.Series(dtype=float)), errors="coerce").fillna(0.0)
+    overflow_net = pd.to_numeric(overflow.get(_effective_net_col(cost), pd.Series(dtype=float)), errors="coerce")
+    early_exits = int(selected.get("checkpoint_triggered", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()) if not selected.empty else 0
+    cp60_would_exits = int(selected.get("cp60_would_exit", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()) if not selected.empty else 0
+    protected_exits = int(selected.get("protected_by_beta_high", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()) if not selected.empty else 0
+    protected_delta = pd.to_numeric(
+        selected.loc[selected.get("protected_by_beta_high", pd.Series(False, index=selected.index)).fillna(False).astype(bool), "delta_vs_cp60"]
+        if not selected.empty and "delta_vs_cp60" in selected.columns
+        else pd.Series(dtype=float),
+        errors="coerce",
+    )
+    return {
+        "portfolio_id": portfolio_id,
+        "cost_single_side_bps": cost,
+        "selected_trades": int(len(selected)),
+        "core_trades": int(len(core)),
+        "overflow_trades": int(len(overflow)),
+        "skipped_candidates": int(len(skipped)),
+        "checkpoint_exits": early_exits,
+        "cp60_would_exits": cp60_would_exits,
+        "protected_exits": protected_exits,
+        "protected_delta_vs_cp60_sum": _safe_float(protected_delta.sum()) if len(protected_delta) else 0.0,
+        "protected_delta_vs_cp60_avg": _safe_float(protected_delta.mean()) if len(protected_delta) else np.nan,
+        "selected_effective_net": _safe_float(selected_net.mean()),
+        "skipped_effective_net": _safe_float(skipped_net.mean()),
+        "selected_minus_skipped": _safe_float(selected_net.mean() - skipped_net.mean())
+        if len(selected_net) and len(skipped_net)
+        else np.nan,
+        "portfolio_net": weighted_sum / 8.0,
+        "core_net": _safe_float(pd.to_numeric(core.get(_effective_net_col(cost), pd.Series(dtype=float)), errors="coerce").mean()),
+        "overflow_net": _safe_float((overflow_net * overflow_weights).sum() / overflow_weights.sum())
+        if float(overflow_weights.sum()) > 0
+        else np.nan,
+        "extra_exposure": float(overflow_weights.sum()),
+        "incremental_return_per_extra_exposure": float((overflow_net * overflow_weights).sum() / overflow_weights.sum())
+        if float(overflow_weights.sum()) > 0
+        else np.nan,
+        "real_live_allowed": False,
+    }
+
+
+def _slot_release_attribution_live(ledger: pd.DataFrame) -> pd.DataFrame:
+    if ledger.empty:
+        return pd.DataFrame()
+    base_by_label = {
+        "S2": set(ledger[ledger["portfolio_id"].astype(str).eq(CHECKPOINT_PORTFOLIO_IDS["S0"])]["signal_id"].astype(str)),
+        "S3": set(ledger[ledger["portfolio_id"].astype(str).eq(CHECKPOINT_PORTFOLIO_IDS["S1"])]["signal_id"].astype(str)),
+        "S4": set(ledger[ledger["portfolio_id"].astype(str).eq(CHECKPOINT_PORTFOLIO_IDS["S0"])]["signal_id"].astype(str)),
+        "S5": set(ledger[ledger["portfolio_id"].astype(str).eq(CHECKPOINT_PORTFOLIO_IDS["S1"])]["signal_id"].astype(str)),
+    }
+    rows: list[dict[str, object]] = []
+    cp_ids = [
+        CHECKPOINT_PORTFOLIO_IDS["S2"],
+        CHECKPOINT_PORTFOLIO_IDS["S3"],
+        CHECKPOINT_PORTFOLIO_IDS["S4"],
+        CHECKPOINT_PORTFOLIO_IDS["S5"],
+    ]
+    cp = ledger[ledger["portfolio_id"].astype(str).isin(cp_ids)].copy()
+    for row in cp.itertuples(index=False):
+        label = str(getattr(row, "portfolio_label", ""))
+        signal_id = str(getattr(row, "signal_id", ""))
+        new_trade = signal_id not in base_by_label.get(label, set())
+        checkpoint_triggered = bool(getattr(row, "checkpoint_triggered", False))
+        net_if_kept = getattr(row, "net_if_kept_counterfactual_20bp", np.nan)
+        net_if_exited = getattr(row, "effective_net_return_20bp", np.nan)
+        rows.append(
+            {
+                "portfolio_id": getattr(row, "portfolio_id", ""),
+                "trade_id": getattr(row, "trade_id", ""),
+                "signal_id": signal_id,
+                "symbol": getattr(row, "symbol", ""),
+                "candidate": getattr(row, "candidate", ""),
+                "entry_time": getattr(row, "entry_time", pd.NaT),
+                "checkpoint_time": getattr(row, "checkpoint_time", pd.NaT),
+                "checkpoint_net20": getattr(row, "checkpoint_net20", np.nan),
+                "exit_by_checkpoint": checkpoint_triggered,
+                "cp60_would_exit": bool(getattr(row, "cp60_would_exit", False)),
+                "protected_by_beta_high": bool(getattr(row, "protected_by_beta_high", False)),
+                "net_if_kept_counterfactual": net_if_kept,
+                "net_if_checkpoint_exit": net_if_exited if checkpoint_triggered else np.nan,
+                "slot_released": checkpoint_triggered,
+                "new_trade_entered_due_to_release": new_trade,
+                "new_trade_net20": net_if_exited if new_trade else np.nan,
+                "avoidance_pnl": (net_if_exited - net_if_kept) if checkpoint_triggered else 0.0,
+                "opportunity_capture": net_if_exited if new_trade else 0.0,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _checkpoint_protection_attribution_live(ledger: pd.DataFrame) -> pd.DataFrame:
+    columns = [
+        "portfolio_id",
+        "comparison_cp60_portfolio_id",
+        "trade_id",
+        "signal_id",
+        "symbol",
+        "candidate",
+        "entry_time",
+        "checkpoint_time",
+        "checkpoint_exit_time",
+        "original_exit_time",
+        "checkpoint_net20",
+        "counterfactual_cp60_exit_net20",
+        "actual_keep_exit_net20",
+        "delta_vs_cp60",
+        "beta_high_score",
+        "beta_high_threshold",
+        "protected_burst_count_before",
+        "protected_burst_count_after",
+        "protection_cap",
+        "slot_blocked_minutes",
+        "missed_trade_due_to_protection",
+        "missed_trade_count",
+        "missed_trade_ids",
+        "missed_trade_net20_sum",
+        "total_effect_after_missed",
+    ]
+    if ledger.empty:
+        return pd.DataFrame(columns=columns)
+    pairs = {
+        CHECKPOINT_PORTFOLIO_IDS["S4"]: CHECKPOINT_PORTFOLIO_IDS["S2"],
+        CHECKPOINT_PORTFOLIO_IDS["S5"]: CHECKPOINT_PORTFOLIO_IDS["S3"],
+    }
+    rows: list[dict[str, object]] = []
+    for protect_id, cp_id in pairs.items():
+        protected_ledger = ledger[ledger["portfolio_id"].astype(str).eq(protect_id)].copy()
+        cp_ledger = ledger[ledger["portfolio_id"].astype(str).eq(cp_id)].copy()
+        if protected_ledger.empty:
+            continue
+        protected_keys = set(protected_ledger["signal_id"].astype(str))
+        cp_only = cp_ledger[~cp_ledger["signal_id"].astype(str).isin(protected_keys)].copy() if not cp_ledger.empty else pd.DataFrame()
+        protected_rows = protected_ledger[
+            protected_ledger.get("protected_by_beta_high", pd.Series(False, index=protected_ledger.index)).fillna(False).astype(bool)
+        ].copy()
+        for row in protected_rows.itertuples(index=False):
+            checkpoint_exit_time = pd.Timestamp(getattr(row, "checkpoint_exit_time", pd.NaT))
+            original_exit_time = pd.Timestamp(getattr(row, "original_exit_time", getattr(row, "exit_time", pd.NaT)))
+            missed = pd.DataFrame()
+            if not cp_only.empty and pd.notna(checkpoint_exit_time) and pd.notna(original_exit_time):
+                entry = pd.to_datetime(cp_only["entry_time"], utc=True, errors="coerce")
+                missed = cp_only[entry.ge(checkpoint_exit_time) & entry.lt(original_exit_time)].copy()
+            missed_net = pd.to_numeric(missed.get("effective_net_return_20bp", pd.Series(dtype=float)), errors="coerce")
+            delta_vs_cp60 = float(pd.to_numeric(pd.Series([getattr(row, "delta_vs_cp60", np.nan)]), errors="coerce").iloc[0])
+            rows.append(
+                {
+                    "portfolio_id": protect_id,
+                    "comparison_cp60_portfolio_id": cp_id,
+                    "trade_id": getattr(row, "trade_id", ""),
+                    "signal_id": getattr(row, "signal_id", ""),
+                    "symbol": getattr(row, "symbol", ""),
+                    "candidate": getattr(row, "candidate", ""),
+                    "entry_time": getattr(row, "entry_time", pd.NaT),
+                    "checkpoint_time": getattr(row, "checkpoint_time", pd.NaT),
+                    "checkpoint_exit_time": getattr(row, "checkpoint_exit_time", pd.NaT),
+                    "original_exit_time": getattr(row, "original_exit_time", pd.NaT),
+                    "checkpoint_net20": getattr(row, "checkpoint_net20", np.nan),
+                    "counterfactual_cp60_exit_net20": getattr(row, "counterfactual_cp60_exit_net20", np.nan),
+                    "actual_keep_exit_net20": getattr(row, "actual_keep_exit_net20", np.nan),
+                    "delta_vs_cp60": delta_vs_cp60,
+                    "beta_high_score": getattr(row, "beta_high_score", np.nan),
+                    "beta_high_threshold": getattr(row, "beta_high_threshold", CP60_PROTECT_A_BETA_HIGH_THRESHOLD),
+                    "protected_burst_count_before": getattr(row, "protected_burst_count_before", np.nan),
+                    "protected_burst_count_after": getattr(row, "protected_burst_count_after", np.nan),
+                    "protection_cap": getattr(row, "protection_cap", CP60_PROTECT_A_CAP_PER_BURST),
+                    "slot_blocked_minutes": getattr(row, "slot_blocked_minutes", np.nan),
+                    "missed_trade_due_to_protection": not missed.empty,
+                    "missed_trade_count": int(len(missed)),
+                    "missed_trade_ids": ",".join(missed["signal_id"].astype(str).tolist()) if not missed.empty else "",
+                    "missed_trade_net20_sum": float(missed_net.sum()) if len(missed_net) else 0.0,
+                    "total_effect_after_missed": delta_vs_cp60 - (float(missed_net.sum()) if len(missed_net) else 0.0),
+                }
+            )
+    return pd.DataFrame(rows, columns=columns)
+
+
+def _checkpoint_daily_summary(ledger: pd.DataFrame, daily: pd.DataFrame) -> pd.DataFrame:
+    if ledger.empty:
+        return daily
+    out = daily.copy()
+    if out.empty:
+        return out
+    return out.sort_values(["date", "portfolio_id"]).reset_index(drop=True)
+
+
+def _checkpoint_local_time_audit(pool: pd.DataFrame, prepared: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for minutes in (45, 60, 75):
+        checked = _attach_checkpoint_prices(pool, prepared, checkpoint_minutes=minutes)
+        selected, skipped = _select_checkpoint_shadow_portfolio(
+            checked,
+            {
+                "portfolio_id": f"P2_MAX8_CP{minutes}",
+                "label": f"CP{minutes}",
+                "checkpoint_enabled": True,
+                "overflow_enabled": False,
+                "description": f"P2 max8 CP{minutes} local audit.",
+            },
+        )
+        row = _checkpoint_summary_row(f"P2_MAX8_CP{minutes}", selected, skipped, cost=20)
+        row["checkpoint_minutes"] = minutes
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _checkpoint_candidate_type_audit(ledger: pd.DataFrame) -> pd.DataFrame:
+    if ledger.empty:
+        return pd.DataFrame()
+    data = ledger[ledger["portfolio_id"].astype(str).eq(CHECKPOINT_PORTFOLIO_IDS["S2"])].copy()
+    rows: list[dict[str, object]] = []
+    for candidate, group in data.groupby("candidate", sort=False, dropna=False):
+        rows.append(
+            {
+                "candidate": candidate,
+                "trades": int(len(group)),
+                "checkpoint_exits": int(group.get("checkpoint_triggered", pd.Series(dtype=bool)).fillna(False).astype(bool).sum()),
+                "effective_net20": _safe_float(pd.to_numeric(group.get("effective_net_return_20bp"), errors="coerce").mean()),
+                "kept_counterfactual_net20": _safe_float(pd.to_numeric(group.get("net_if_kept_counterfactual_20bp"), errors="coerce").mean()),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _write_checkpoint_status(
+    report_root: Path,
+    status: pd.DataFrame,
+    summary: pd.DataFrame,
+    slot: pd.DataFrame,
+) -> None:
+    lines = [
+        "# v1.3G Checkpoint Shadow Live",
+        "",
+        "- status: shadow_only",
+        "- real_live_allowed: false",
+        "- checkpoint_rule: entry_time + 60m, latest 15m close <= checkpoint_time, exit next 15m open when net20 <= 0",
+        "- protect_a_cap2_rule: if CP60 would exit and beta_high_score >= frozen threshold, protect at most 2 exits per burst",
+        f"- protect_a_beta_high_threshold: {CP60_PROTECT_A_BETA_HIGH_THRESHOLD}",
+        "- primary_replacement_allowed: false",
+        "",
+        "## Portfolios",
+    ]
+    if status.empty:
+        lines.append("- No checkpoint shadow rows yet.")
+    else:
+        for row in status.itertuples(index=False):
+            lines.append(
+                f"- {row.portfolio_id}: selected={row.selected_trades}, skipped={row.skipped_candidates}, "
+                f"checkpoint_exits={row.checkpoint_exits}, protected_exits={getattr(row, 'protected_exits', 0)}, "
+                f"sample_status={row.sample_status}, "
+                f"evaluation_status={row.evaluation_status}"
+            )
+    focal = summary[
+        pd.to_numeric(summary.get("cost_single_side_bps"), errors="coerce").eq(20)
+    ] if not summary.empty else pd.DataFrame()
+    if not focal.empty:
+        lines.extend(["", "## 20bp Comparison"])
+        for row in focal.itertuples(index=False):
+            lines.append(
+                f"- {row.portfolio_id}: portfolio_net20={row.portfolio_net:.4%}, "
+                f"selected_net20={row.selected_effective_net:.4%}, skipped_net20={row.skipped_effective_net:.4%}, "
+                f"protected={getattr(row, 'protected_exits', 0)}, delta={row.selected_minus_skipped:.4%}"
+            )
+    if not slot.empty:
+        triggered = slot[slot.get("exit_by_checkpoint", pd.Series(dtype=bool)).fillna(False).astype(bool)]
+        new_trades = slot[slot.get("new_trade_entered_due_to_release", pd.Series(dtype=bool)).fillna(False).astype(bool)]
+        lines.extend(
+            [
+                "",
+                "## Slot Release",
+                f"- checkpoint_exit_rows: {len(triggered)}",
+                f"- new_trades_due_to_release: {len(new_trades)}",
+                f"- avoidance_pnl_sum: {pd.to_numeric(triggered.get('avoidance_pnl'), errors='coerce').sum():.4%}",
+                f"- opportunity_capture_sum: {pd.to_numeric(new_trades.get('opportunity_capture'), errors='coerce').sum():.4%}",
+            ]
+        )
+    (report_root / "checkpoint_current_status.md").write_text("\n".join(lines), encoding="utf-8")
+
+
 def _write_overflow_status(report_root: Path, ledger: pd.DataFrame, daily: pd.DataFrame) -> None:
     all20 = daily[
         daily["date"].astype(str).eq("ALL") & pd.to_numeric(daily["cost_single_side_bps"], errors="coerce").eq(20)
@@ -910,6 +1820,14 @@ def write_v07d2_outputs(
     shadow_status, shadow_trades, shadow_skipped, shadow_daily, shadow_summary = shadow_portfolio_live(trades)
     overflow_ledger = _overflow_trade_ledger(shadow_trades)
     overflow_daily = _overflow_daily_summary(overflow_ledger)
+    checkpoint_status, checkpoint_ledger, checkpoint_skipped, checkpoint_daily, checkpoint_summary, slot_release = (
+        checkpoint_shadow_live(trades, prepared)
+    )
+    checkpoint_pool = _checkpoint_trade_pool(trades, prepared)
+    checkpoint_time_audit = _checkpoint_local_time_audit(checkpoint_pool, prepared)
+    checkpoint_candidate_type_audit = _checkpoint_candidate_type_audit(checkpoint_ledger)
+    checkpoint_protection_attribution = _checkpoint_protection_attribution_live(checkpoint_ledger)
+    pre_entry_router_counterfactual = _pre_entry_router_counterfactual_live(trades)
     outputs = {
         "paper_signals": report_root / "paper_signals.parquet",
         "paper_trades": report_root / "paper_trades.parquet",
@@ -933,6 +1851,17 @@ def write_v07d2_outputs(
         "overflow_trade_ledger": report_root / "overflow_trade_ledger.parquet",
         "overflow_daily_summary": report_root / "overflow_daily_summary.csv",
         "overflow_current_status": report_root / "overflow_current_status.md",
+        "checkpoint_trade_ledger": report_root / "checkpoint_trade_ledger.parquet",
+        "checkpoint_skipped_candidates": report_root / "checkpoint_skipped_candidates.parquet",
+        "checkpoint_daily_summary": report_root / "checkpoint_daily_summary.csv",
+        "checkpoint_comparison": report_root / "checkpoint_comparison.csv",
+        "slot_release_attribution_live": report_root / "slot_release_attribution_live.csv",
+        "checkpoint_protection_attribution_live": report_root / "checkpoint_protection_attribution_live.csv",
+        "checkpoint_current_status": report_root / "checkpoint_current_status.md",
+        "checkpoint_45_60_75_audit": report_root / "checkpoint_45_60_75_audit.csv",
+        "checkpoint_candidate_type_audit": report_root / "checkpoint_candidate_type_audit.csv",
+        "pre_entry_router_counterfactual_live": report_root / "pre_entry_router_counterfactual_live.csv",
+        "pre_entry_router_counterfactual_live_data": report_root / "pre_entry_router_counterfactual_live.parquet",
         "current_status": report_root / "current_status.md",
         "candidate_status": report_root / "candidate_status.md",
         "decision_log": report_root / "decision_log.md",
@@ -964,8 +1893,19 @@ def write_v07d2_outputs(
     shadow_summary.to_csv(outputs["ranking_shadow_summary"], index=False)
     write_parquet(overflow_ledger, outputs["overflow_trade_ledger"])
     overflow_daily.to_csv(outputs["overflow_daily_summary"], index=False)
+    write_parquet(checkpoint_ledger, outputs["checkpoint_trade_ledger"])
+    write_parquet(checkpoint_skipped, outputs["checkpoint_skipped_candidates"])
+    checkpoint_daily.to_csv(outputs["checkpoint_daily_summary"], index=False)
+    checkpoint_summary.to_csv(outputs["checkpoint_comparison"], index=False)
+    slot_release.to_csv(outputs["slot_release_attribution_live"], index=False)
+    checkpoint_protection_attribution.to_csv(outputs["checkpoint_protection_attribution_live"], index=False)
+    checkpoint_time_audit.to_csv(outputs["checkpoint_45_60_75_audit"], index=False)
+    checkpoint_candidate_type_audit.to_csv(outputs["checkpoint_candidate_type_audit"], index=False)
+    pre_entry_router_counterfactual.to_csv(outputs["pre_entry_router_counterfactual_live"], index=False)
+    write_parquet(pre_entry_router_counterfactual, outputs["pre_entry_router_counterfactual_live_data"])
     _write_shadow_status(report_root, shadow_status, shadow_summary)
     _write_overflow_status(report_root, overflow_ledger, overflow_daily)
+    _write_checkpoint_status(report_root, checkpoint_status, checkpoint_summary, slot_release)
     _write_status(report_root, prepared, signals, trades, baseline_trades, config, shadow_status, shadow_summary)
     _append_decision_log(report_root, prepared, trades, config)
     return outputs

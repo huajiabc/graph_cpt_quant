@@ -11,9 +11,11 @@ dist/
 /data/
 /reports/
 /logs/
+/server_backups/
 
 .env
 pw.txt
+last_backup_output.txt
 *.pem
 *.key
 .DS_Store

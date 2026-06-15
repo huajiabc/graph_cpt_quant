@@ -60,6 +60,34 @@ from pressure_graph.pipeline import (
     run_v12s_short_motif_atlas_from_features,
     run_v12s2_long_risk_off_overlay_from_features,
     run_v12s3_current_stack_risk_off_from_features,
+    run_v11r_portfolio_risk_envelope_from_features,
+    run_v12_reclaim_microstructure_quality_from_features,
+    run_v13_post_reclaim_slot_management_from_features,
+    run_v13a_checkpoint_robustness_from_features,
+    run_v13c_cp60_false_exit_attribution_from_features,
+    run_v13d_cp60_context_protection_from_features,
+    run_v13e_cp60_beta_protection_stability_from_features,
+    run_v13f_cp60_protect_a_stability_from_features,
+    run_v20_graph_motif_search_from_features,
+    run_v21a_holdout_autopsy_from_features,
+    run_v21b_state_cluster_atlas_from_features,
+    run_v21c_state_transition_graph_from_features,
+    run_v21d_router_preflight_from_features,
+    run_v21e_walkforward_router_stability_from_features,
+    run_v21f_state_drift_audit_from_features,
+    run_v21g_meta_router_action_labels_from_features,
+    run_v21h_state_discovery_synthesis,
+    run_v22a_meta_router_dataset_audit,
+    run_v22b_preentry_meta_router,
+    run_v22c_walkforward_policy_simulation,
+    run_v22d_threshold_stability,
+    run_v22e_negative_controls,
+    run_v22f_meta_router_synthesis,
+    run_v22g_router_explainability,
+    run_v23_forward_evaluation,
+    run_v30_symbol_risk_off_overlay_from_features,
+    run_v31_failure_position_management_from_features,
+    run_v32_failure_state_atlas_from_features,
     run_v06a_reclaim_alpha_from_features,
 )
 from pressure_graph.reports.v06a1 import load_v06a1_config
@@ -837,6 +865,27 @@ def run_v11_orderflow_ranking(
         typer.echo(f"{name}: {path}")
 
 
+@app.command("run-v11r-risk-envelope")
+def run_v11r_risk_envelope(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    cfg = load_config(config)
+    outputs = run_v11r_portfolio_risk_envelope_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v12-reclaim-micro")
+def run_v12_reclaim_micro(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """Reclaim-path microstructure quality attribution for CIC/P2 candidates."""
+    cfg = load_config(config)
+    outputs = run_v12_reclaim_microstructure_quality_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
 @app.command("run-v12s-short-atlas")
 def run_v12s_short_atlas(
     config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
@@ -866,6 +915,265 @@ def run_v12s3_current_stack_risk_off(
     """Phase-4 finish: replay the symbol risk-off gate against the current long stack (research only)."""
     cfg = load_config(config)
     outputs = run_v12s3_current_stack_risk_off_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v13-post-reclaim-slot")
+def run_v13_post_reclaim_slot(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """Post-reclaim follow-through checkpoint slot-management attribution."""
+    cfg = load_config(config)
+    outputs = run_v13_post_reclaim_slot_management_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v13a-checkpoint-robustness")
+def run_v13a_checkpoint_robustness(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """Checkpoint robustness and O6 integration report."""
+    cfg = load_config(config)
+    outputs = run_v13a_checkpoint_robustness_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v13c-cp60-false-exit")
+def run_v13c_cp60_false_exit(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """CP60 false-exit attribution report."""
+    cfg = load_config(config)
+    outputs = run_v13c_cp60_false_exit_attribution_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v13d-cp60-context-protection")
+def run_v13d_cp60_context_protection(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """CP60 context-protection offline audit."""
+    cfg = load_config(config)
+    outputs = run_v13d_cp60_context_protection_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v13e-cp60-beta-protection-stability")
+def run_v13e_cp60_beta_protection_stability(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """CP60 beta-high protection stability audit."""
+    cfg = load_config(config)
+    outputs = run_v13e_cp60_beta_protection_stability_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v13f-cp60-protect-a-stability")
+def run_v13f_cp60_protect_a_stability(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """CP60 Protect_A burst/month stability audit."""
+    cfg = load_config(config)
+    outputs = run_v13f_cp60_protect_a_stability_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v20-graph-motif-search")
+def run_v20_graph_motif_search(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """v2.0 graph motif search framework: DSL + ACO + GA + SA."""
+    cfg = load_config(config)
+    outputs = run_v20_graph_motif_search_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v21a-holdout-autopsy")
+def run_v21a_holdout_autopsy(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """v2.1A holdout autopsy for CIC graph/capacity architectures."""
+    cfg = load_config(config)
+    outputs = run_v21a_holdout_autopsy_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v21b-state-cluster-atlas")
+def run_v21b_state_cluster_atlas(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """v2.1B state cluster atlas for CIC/P2 event states."""
+    cfg = load_config(config)
+    outputs = run_v21b_state_cluster_atlas_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v21c-state-transition-graph")
+def run_v21c_state_transition_graph(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """v2.1C transition graph over discovered CIC/P2 state clusters."""
+    cfg = load_config(config)
+    outputs = run_v21c_state_transition_graph_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v21d-router-preflight")
+def run_v21d_router_preflight(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """v2.1D preflight audit for state-cluster / transition router actions."""
+    cfg = load_config(config)
+    outputs = run_v21d_router_preflight_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v21e-walkforward-router")
+def run_v21e_walkforward_router(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """v2.1E month-by-month prior-only walk-forward router stability audit."""
+    cfg = load_config(config)
+    outputs = run_v21e_walkforward_router_stability_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v21f-state-drift-audit")
+def run_v21f_state_drift_audit(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """v2.1F feature/state drift and walk-forward novelty audit."""
+    cfg = load_config(config)
+    outputs = run_v21f_state_drift_audit_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v21g-meta-router-labels")
+def run_v21g_meta_router_labels(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """v2.1G offline feature + action-label dataset for meta-router research."""
+    cfg = load_config(config)
+    outputs = run_v21g_meta_router_action_labels_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v21h-state-synthesis")
+def run_v21h_state_synthesis() -> None:
+    """v2.1H synthesis and v2.2 handoff over existing v2.0/v2.1 reports."""
+    outputs = run_v21h_state_discovery_synthesis()
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v22a-meta-router-audit")
+def run_v22a_meta_router_audit() -> None:
+    """v2.2A label/feature sanity audit before any meta-router model training."""
+    outputs = run_v22a_meta_router_dataset_audit()
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v22b-preentry-router")
+def run_v22b_preentry_router() -> None:
+    """v2.2B offline walk-forward pre-entry meta-router over B4 architecture."""
+    outputs = run_v22b_preentry_meta_router()
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v22c-policy-simulation")
+def run_v22c_policy_simulation() -> None:
+    """v2.2C fixed action-policy simulation from pre-entry router probabilities."""
+    outputs = run_v22c_walkforward_policy_simulation()
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v22d-threshold-stability")
+def run_v22d_threshold_stability_cmd() -> None:
+    """v2.2D threshold stability surface for pre-entry router probabilities."""
+    outputs = run_v22d_threshold_stability()
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v22e-negative-controls")
+def run_v22e_negative_controls_cmd() -> None:
+    """v2.2E negative controls for pre-entry router policies."""
+    outputs = run_v22e_negative_controls()
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v22f-meta-router-synthesis")
+def run_v22f_meta_router_synthesis_cmd() -> None:
+    """v2.2F synthesis and promotion decision for meta-router research."""
+    outputs = run_v22f_meta_router_synthesis()
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v22g-router-explainability")
+def run_v22g_router_explainability_cmd() -> None:
+    """v2.2G router explainability and month-deconfounding diagnostics."""
+    outputs = run_v22g_router_explainability()
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v23-forward-evaluation")
+def run_v23_forward_evaluation_cmd() -> None:
+    """v2.3 forward evaluation and decision ledger over current paper-live shadows."""
+    outputs = run_v23_forward_evaluation()
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v30-symbol-risk-off-overlay")
+def run_v30_symbol_risk_off_overlay_cmd(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to experiment config."),
+) -> None:
+    """v3.0 symbol-level failure risk-off overlay on the current long stack."""
+    cfg = load_config(config)
+    outputs = run_v30_symbol_risk_off_overlay_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v31-failure-position-management")
+def run_v31_failure_position_management_cmd(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to experiment config."),
+) -> None:
+    """v3.1 failure-aware position management for already-open CIC longs."""
+    cfg = load_config(config)
+    outputs = run_v31_failure_position_management_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v32-failure-state-atlas")
+def run_v32_failure_state_atlas_cmd(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to experiment config."),
+) -> None:
+    """v3.2 failure-state atlas with long-book action labels."""
+    cfg = load_config(config)
+    outputs = run_v32_failure_state_atlas_from_features(cfg)
     for name, path in outputs.items():
         typer.echo(f"{name}: {path}")
 
