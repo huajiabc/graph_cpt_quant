@@ -15,6 +15,8 @@ elif command -v conda >/dev/null 2>&1; then
   conda activate quant
 fi
 
+export PYTHONPATH="${PWD}/src:${PWD}/scripts:${PYTHONPATH:-}"
+
 history_days="${V06A3_HISTORY_DAYS:-45}"
 signal_days="${V06A3_SIGNAL_DAYS:-7}"
 max_symbols="${V06A3_MAX_SYMBOLS:-0}"

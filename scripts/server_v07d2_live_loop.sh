@@ -15,6 +15,8 @@ elif command -v conda >/dev/null 2>&1; then
   conda activate quant
 fi
 
+export PYTHONPATH="${PWD}/src:${PWD}/scripts:${PYTHONPATH:-}"
+
 history_days="${V07D2_HISTORY_DAYS:-45}"
 signal_days="${V07D2_SIGNAL_DAYS:-7}"
 max_symbols="${V07D2_MAX_SYMBOLS:-0}"
@@ -26,12 +28,23 @@ while true; do
   started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   {
     echo "===== v0.7D.2 CIC-filtered MIR1 live loop ${started_at} ====="
+    loop_rc=0
     python scripts/v07d2_live_once.py \
       --base-config configs/v0_3.yaml \
       --paper-config configs/v0_7d2_cic_mir1_paper_live.yaml \
       --history-days "${history_days}" \
       --signal-days "${signal_days}" \
-      --max-symbols "${max_symbols}"
+      --max-symbols "${max_symbols}" || loop_rc=$?
+    python scripts/live_health_check.py \
+      --base-config configs/v0_3.yaml \
+      --live-root data/live_v07d2 \
+      --report-root reports/v0_7d2_cic_mir1_paper_live \
+      --processed-path data/live_v07d2/processed/v0_7d2_live_features.parquet \
+      --health-report reports/v0_7d2_cic_mir1_paper_live/live_health_status.md || true
+    if [ "${loop_rc}" -ne 0 ]; then
+      echo "v0.7D.2 live refresh failed with exit ${loop_rc}"
+      exit "${loop_rc}"
+    fi
   } >> "${log_dir}/live_loop.log" 2>&1 || true
 
   now_epoch="$(date -u +%s)"

@@ -15,6 +15,8 @@ elif command -v conda >/dev/null 2>&1; then
   conda activate quant
 fi
 
+export PYTHONPATH="${PWD}/src:${PWD}/scripts:${PYTHONPATH:-}"
+
 signal_days="${V10_SHORT_SIGNAL_DAYS:-7}"
 sleep_seconds="${V10_SHORT_SLEEP_SECONDS:-900}"
 log_dir="logs/v1_0_short"
@@ -37,4 +39,3 @@ while true; do
   fi
   sleep "${sleep_for}"
 done
-
