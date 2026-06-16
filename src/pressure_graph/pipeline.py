@@ -87,6 +87,10 @@ from pressure_graph.reports.v3_4_true_short_sleeve import (
     V34Config,
     write_v3_4_true_short_sleeve,
 )
+from pressure_graph.reports.v3_5_failure_risk_layer_bridge import (
+    V35Config,
+    write_v3_5_failure_risk_layer_bridge,
+)
 from pressure_graph.paper_live import (
     write_v05_paper_live,
     write_v06a3_paper_live,
@@ -674,6 +678,20 @@ def run_v3_3_failure_path_search_from_features(
         config,
         v33_config or V33Config(),
         use_synthetic_fitness=use_synthetic_fitness,
+    )
+
+
+def run_v3_5_failure_risk_layer_bridge_from_features(
+    config: ExperimentConfig,
+    v35_config: V35Config | None = None,
+) -> dict[str, Path]:
+    """v3.5 Failure Risk Layer Bridge: F0..F5 × B0..B3 over the current long stack."""
+    features_path = (
+        config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    )
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v3_5_failure_risk_layer_bridge(
+        features_path, instruments, config, v35_config or V35Config()
     )
 
 

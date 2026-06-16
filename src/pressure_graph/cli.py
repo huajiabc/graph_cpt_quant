@@ -62,6 +62,7 @@ from pressure_graph.pipeline import (
     run_v12s3_current_stack_risk_off_from_features,
     run_v3_3_failure_path_search_from_features,
     run_v3_4_true_short_sleeve_from_features,
+    run_v3_5_failure_risk_layer_bridge_from_features,
     run_v06a_reclaim_alpha_from_features,
 )
 from pressure_graph.reports.v06a1 import load_v06a1_config
@@ -895,6 +896,17 @@ def run_v3_3_failure_path_search(
     """v3.3 ACO+GA+SA meta-search over the v1.2s3 long risk-off stack (research only)."""
     cfg = load_config(config)
     outputs = run_v3_3_failure_path_search_from_features(cfg, use_synthetic_fitness=synthetic)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v3-5-failure-risk-layer-bridge")
+def run_v3_5_failure_risk_layer_bridge(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """v3.5 failure risk layer bridge — F0..F5 × B0..B3 over the current long stack (research only)."""
+    cfg = load_config(config)
+    outputs = run_v3_5_failure_risk_layer_bridge_from_features(cfg)
     for name, path in outputs.items():
         typer.echo(f"{name}: {path}")
 
