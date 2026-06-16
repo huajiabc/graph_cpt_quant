@@ -49,7 +49,19 @@ BAR_NS = int(BAR.value)  # 15 minutes in nanoseconds — gate math runs in epoch
 
 
 def _epoch_ns(series: pd.Series) -> np.ndarray:
-    return pd.to_datetime(series, utc=True, errors="coerce").astype("int64").to_numpy()
+    """Return the nanosecond-since-epoch int64 representation.
+
+    pandas 3.x stores ``datetime64[us, UTC]`` by default, so a naive
+    ``.astype('int64')`` would return microseconds and silently widen
+    cooldown windows by 1000x against ns-scaled ``BAR_NS``. Force ns
+    precision explicitly.
+    """
+    return (
+        pd.to_datetime(series, utc=True, errors="coerce")
+        .astype("datetime64[ns, UTC]")
+        .astype("int64")
+        .to_numpy()
+    )
 
 
 @dataclass(frozen=True)

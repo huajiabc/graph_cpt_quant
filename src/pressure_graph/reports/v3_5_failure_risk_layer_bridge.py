@@ -573,15 +573,20 @@ def _run_cell(
     baseline: BaselineStack,
     events: pd.DataFrame,
     cfg: V35Config,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series]:
-    """Run one (action, baseline) cell. Returns (ledger, skipped, decisions)."""
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.DataFrame]:
+    """Run one (action, baseline) cell. Returns (ledger, skipped, decisions, work_pool).
+
+    ``work_pool`` is the pool the simulator actually consumed: identical to
+    ``pool`` for B0/B1/B3, and pre-filtered to ``~cp60_would_exit`` for B2.
+    Callers must use ``work_pool`` for downstream metrics / attribution so the
+    decisions Series stays index-aligned.
+    """
     decisions = _build_decisions(pool, action, events, cfg)
     work_pool = pool
     if baseline.use_cp60_prefilter:
         prefilter_mask = ~work_pool["cp60_would_exit"].fillna(False).astype(bool).to_numpy()
-        work_pool = work_pool[prefilter_mask].copy()
+        work_pool = work_pool[prefilter_mask].reset_index(drop=True)
         decisions = decisions[prefilter_mask].reset_index(drop=True)
-        work_pool = work_pool.reset_index(drop=True)
     if baseline.use_overflow and baseline.use_protect_a_cap2:
         ledger, skipped = _simulate_b3_protect_a_cap(
             work_pool, decisions, policy=cfg.overflow_policy, protect_a_cap=cfg.protect_a_cap
@@ -590,7 +595,7 @@ def _run_cell(
         ledger, skipped = _simulate_b1_overflow(work_pool, decisions, policy=cfg.overflow_policy)
     else:
         ledger, skipped = _simulate_b0_selection(work_pool, decisions, cfg.max_positions)
-    return ledger, skipped, decisions
+    return ledger, skipped, decisions, work_pool
 
 
 # --------------------------------------------------------------------------------------
@@ -632,11 +637,11 @@ def _cell_metrics(
     skip_overflow = int((decisions == ACTION_SKIP_OVERFLOW).sum())
     protect_a_flagged = int((decisions == ACTION_FLAG_PROTECT_A).sum())
     longs_gated = skip_full + skip_overflow
-    removed_net = pd.to_numeric(
-        pool.loc[decisions.eq(ACTION_SKIP_FULL).index[decisions == ACTION_SKIP_FULL], "net_return"]
-        if (decisions == ACTION_SKIP_FULL).any()
-        else pd.Series(dtype=float),
-        errors="coerce",
+    skip_full_mask = (decisions == ACTION_SKIP_FULL)
+    removed_net = (
+        pd.to_numeric(pool.loc[skip_full_mask, "net_return"], errors="coerce")
+        if skip_full_mask.any() and "net_return" in pool.columns
+        else pd.Series(dtype=float)
     )
     return {
         **base_metrics,
@@ -885,12 +890,12 @@ def write_v3_5_failure_risk_layer_bridge(
 
     for action in cfg.actions:
         events = _events_for(action.motifs)
-        motif_attr = _per_row_motif_attribution(pool, events, cfg.cooldown_bars)
         for baseline in cfg.baselines:
-            ledger, skipped, decisions = _run_cell(pool, action, baseline, events, cfg)
-            metrics = _cell_metrics(pool, ledger, skipped, decisions, action, baseline, cfg)
+            ledger, skipped, decisions, work_pool = _run_cell(pool, action, baseline, events, cfg)
+            motif_attr = _per_row_motif_attribution(work_pool, events, cfg.cooldown_bars)
+            metrics = _cell_metrics(work_pool, ledger, skipped, decisions, action, baseline, cfg)
             summary_rows.append(metrics)
-            attr = _skipped_attribution(pool, decisions, events, motif_attr, action, baseline)
+            attr = _skipped_attribution(work_pool, decisions, events, motif_attr, action, baseline)
             if not attr.empty:
                 skipped_attr_frames.append(attr)
 

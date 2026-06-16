@@ -323,7 +323,7 @@ def test_run_cell_b0_f1_pipeline_end_to_end() -> None:
     f1 = next(a for a in FAILURE_ACTIONS if a.code == "F1")
     b0 = next(b for b in BASELINES if b.code == "B0")
     cfg = V35Config(cooldown_bars=8)
-    ledger, skipped, decisions = _run_cell(pool, f1, b0, events, cfg)
+    ledger, skipped, decisions, _ = _run_cell(pool, f1, b0, events, cfg)
     assert len(ledger) == 1
     assert ledger.iloc[0]["symbol"] == "BBBUSDT"
     assert decisions.iloc[0] == ACTION_SKIP_FULL
@@ -354,7 +354,7 @@ def test_b2_cp60_prefilter_drops_weak_stagnant_rows() -> None:
     f0 = next(a for a in FAILURE_ACTIONS if a.code == "F0")
     b2 = next(b for b in BASELINES if b.code == "B2")
     cfg = V35Config(cooldown_bars=8)
-    ledger, skipped, decisions = _run_cell(pool, f0, b2, events, cfg)
+    ledger, skipped, decisions, _ = _run_cell(pool, f0, b2, events, cfg)
     selected_symbols = (
         ledger["symbol"].astype(str).tolist() if not ledger.empty else []
     )
