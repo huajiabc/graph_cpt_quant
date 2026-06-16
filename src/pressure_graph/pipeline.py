@@ -95,6 +95,10 @@ from pressure_graph.reports.v4s_failure_state_graph import (
     V4SConfig,
     write_v4s_failure_state_graph,
 )
+from pressure_graph.reports.v6s_path_c_short_validation import (
+    V6SConfig,
+    write_v6s_path_c_short_validation,
+)
 from pressure_graph.paper_live import (
     write_v05_paper_live,
     write_v06a3_paper_live,
@@ -710,6 +714,20 @@ def run_v4s_failure_state_graph_from_features(
     instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
     return write_v4s_failure_state_graph(
         features_path, instruments, config, v4s_config or V4SConfig()
+    )
+
+
+def run_v6s_path_c_short_validation_from_features(
+    config: ExperimentConfig,
+    v6s_config: V6SConfig | None = None,
+) -> dict[str, Path]:
+    """v6S Path C Short Validation — discipline-grade test of the v4S survivor."""
+    features_path = (
+        config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    )
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v6s_path_c_short_validation(
+        features_path, instruments, config, v6s_config or V6SConfig()
     )
 
 
