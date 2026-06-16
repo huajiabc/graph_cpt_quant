@@ -65,6 +65,7 @@ from pressure_graph.pipeline import (
     run_v3_5_failure_risk_layer_bridge_from_features,
     run_v4s_failure_state_graph_from_features,
     run_v6s_path_c_short_validation_from_features,
+    run_failure_overlay_shadow_from_features,
     run_v06a_reclaim_alpha_from_features,
 )
 from pressure_graph.reports.v06a1 import load_v06a1_config
@@ -931,6 +932,17 @@ def run_v6s_path_c_short_validation(
     """v6S Path C short validation — discipline-grade test of the v4S survivor (research only)."""
     cfg = load_config(config)
     outputs = run_v6s_path_c_short_validation_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-failure-overlay-shadow")
+def run_failure_overlay_shadow(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """F3 / F5 live shadow recorder — idempotent re-run; updates ledger + daily + status (research only)."""
+    cfg = load_config(config)
+    outputs = run_failure_overlay_shadow_from_features(cfg)
     for name, path in outputs.items():
         typer.echo(f"{name}: {path}")
 

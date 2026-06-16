@@ -99,6 +99,10 @@ from pressure_graph.reports.v6s_path_c_short_validation import (
     V6SConfig,
     write_v6s_path_c_short_validation,
 )
+from pressure_graph.reports.failure_overlay_shadow import (
+    ShadowConfig,
+    write_failure_overlay_shadow,
+)
 from pressure_graph.paper_live import (
     write_v05_paper_live,
     write_v06a3_paper_live,
@@ -728,6 +732,20 @@ def run_v6s_path_c_short_validation_from_features(
     instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
     return write_v6s_path_c_short_validation(
         features_path, instruments, config, v6s_config or V6SConfig()
+    )
+
+
+def run_failure_overlay_shadow_from_features(
+    config: ExperimentConfig,
+    shadow_config: ShadowConfig | None = None,
+) -> dict[str, Path]:
+    """F3 / F5 live shadow recorder — idempotent re-run against the v0.9D cache."""
+    features_path = (
+        config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    )
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_failure_overlay_shadow(
+        features_path, instruments, config, shadow_config or ShadowConfig()
     )
 
 
