@@ -91,6 +91,10 @@ from pressure_graph.reports.v3_5_failure_risk_layer_bridge import (
     V35Config,
     write_v3_5_failure_risk_layer_bridge,
 )
+from pressure_graph.reports.v4s_failure_state_graph import (
+    V4SConfig,
+    write_v4s_failure_state_graph,
+)
 from pressure_graph.paper_live import (
     write_v05_paper_live,
     write_v06a3_paper_live,
@@ -692,6 +696,20 @@ def run_v3_5_failure_risk_layer_bridge_from_features(
     instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
     return write_v3_5_failure_risk_layer_bridge(
         features_path, instruments, config, v35_config or V35Config()
+    )
+
+
+def run_v4s_failure_state_graph_from_features(
+    config: ExperimentConfig,
+    v4s_config: V4SConfig | None = None,
+) -> dict[str, Path]:
+    """v4S Failure State Graph: 3 paths × 7 actions atop the current long stack."""
+    features_path = (
+        config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    )
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v4s_failure_state_graph(
+        features_path, instruments, config, v4s_config or V4SConfig()
     )
 
 

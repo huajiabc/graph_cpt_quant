@@ -63,6 +63,7 @@ from pressure_graph.pipeline import (
     run_v3_3_failure_path_search_from_features,
     run_v3_4_true_short_sleeve_from_features,
     run_v3_5_failure_risk_layer_bridge_from_features,
+    run_v4s_failure_state_graph_from_features,
     run_v06a_reclaim_alpha_from_features,
 )
 from pressure_graph.reports.v06a1 import load_v06a1_config
@@ -907,6 +908,17 @@ def run_v3_5_failure_risk_layer_bridge(
     """v3.5 failure risk layer bridge — F0..F5 × B0..B3 over the current long stack (research only)."""
     cfg = load_config(config)
     outputs = run_v3_5_failure_risk_layer_bridge_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v4s-failure-state-graph")
+def run_v4s_failure_state_graph(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """v4S failure state graph — 3 paths × 7 actions per failure observation (research only)."""
+    cfg = load_config(config)
+    outputs = run_v4s_failure_state_graph_from_features(cfg)
     for name, path in outputs.items():
         typer.echo(f"{name}: {path}")
 
