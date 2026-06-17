@@ -152,25 +152,47 @@ Direction E and Direction D's naked baseline).
 | **A1** | **h24** | **34** | **+0.93 %** | **+0.61 %** | **+0.41 %** | **73.5 %** | **no_value (gate5, gate7)** | **5, 7** |
 | A2 | h4-h24 | 3 | -3 % to -5 % | -3 % to -5 % | -3 % to -5 % | 0 % | no_value | all |
 
-### A1_h24 detailed read
+### A1_h24 detailed read (canonical 1.5 % lag)
 
-- N=34 events (24 winners, 10 losers).
+- N=34 events (25 winners, 9 losers).
 - max_symbol_share = 35.4 % — fails gate7 (≤ 35 %) by 0.4 percentage points.
-- leave_worst_symbol_net = +0.587 (positive) — symbol diversification
-  remains profitable.
-- best_month_share clipped at 154 % of total uncapped net — gate5 fails
-  because the small total magnifies one month's contribution under the
-  35 % cap.
+- leave_worst_symbol_net = +0.587 (positive).
 - net30 = +0.41 % (cost-robust under the 30 bp stress).
 - short_beats_no_long via gate9 — passes.
 - A0 control (no filter) loses 41 to 205 bps gross at all horizons.
   The filter — Binance sell impulse + Bybit lag — is what supplies the
   edge; not the bar selection itself.
 
-This is the closest cell in v7S to crossing into `risk_off_only`.
-With ~10 % more events (a longer backfill window, or a slightly looser
-Bybit lag threshold), gate7 likely clears mechanically and the cell
-becomes 9/10.
+### A1 threshold sweep (h24 only — h4/h12 stay no_value)
+
+The canonical 1.5 % threshold was followed by a sweep over four lag
+thresholds to test whether the alpha generalizes:
+
+| Variant | Bybit lag ≤ | N | gross | net20 | net30 | win | failures |
+|---------|-------------|---|-------|-------|-------|-----|----------|
+| A1_lag10bp | 1.0 % | 28 | +0.14 % | -0.18 % | -0.38 % | 67.9 % | 1,2,3,5,7,9 |
+| A1 (1.5 %) | 1.5 % | 34 | +0.93 % | +0.61 % | +0.41 % | 73.5 % | 5,7 |
+| A1_lag20bp | 2.0 % | 35 | +0.93 % | +0.61 % | +0.41 % | 74.3 % | 3,5,7 |
+| **A1_lag25bp** | **2.5 %** | **37** | **+1.04 %** | **+0.72 %** | **+0.52 %** | **75.7 %** | **3, 5** |
+
+A1_lag25bp passes 8 of 10 gates (gate7 now clears at 33.x % symbol
+share, just below the 35 % bar) and net30 stays positive at +0.52 %.
+The remaining failures are:
+
+- **gate3** clean_short_hit_lifts (`hit_down_3pct ≥ 0.35`) — at the
+  looser thresholds the shorts win on smaller drops more often
+  (75.7 % at 24h hold), but the rate of clean 3 %+ down moves doesn't
+  scale with N — suggests a slower / smaller-magnitude unwind, not the
+  cliff-like clean-short the gate was designed for.
+- **gate5** month_cap_positive — small N + concentrated months (best
+  month ≈ 154 % of total when capped at 35 %; standard small-sample
+  artifact). The closure doc's reopen criterion §1 is the binding
+  constraint, not the alpha itself.
+
+The 1.0 % threshold (A1_lag10bp) is empirically too strict — N drops
+to 28, the cleanest events get lost, and net20 turns negative. The
+2.5 % threshold is empirically the best on this 574-event tape — but
+even there gate5 / gate3 hold the candidate at `no_value`.
 
 ### Key findings
 

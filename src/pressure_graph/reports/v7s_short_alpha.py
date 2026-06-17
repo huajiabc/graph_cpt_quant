@@ -73,7 +73,7 @@ the local repo has no feature parquet so a local run will report
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable
 
@@ -243,6 +243,11 @@ class V7SConfig:
     a_holding_horizons_bars: tuple[int, ...] = (16, 48, 96)  # 4h / 12h / 24h
     a_event_orderflow_path: Path = ORDERFLOW_EVENT_PATH  # reuse Direction E's lookup
     a_exclude_leader_symbols: bool = True  # do not short BTC/ETH/SOL/BNB
+
+    # A1 threshold sweep — fires the same Binance-sell-impulse gate but at
+    # different Bybit-lag thresholds. The threshold sweep produces extra
+    # candidate codes A1_lag1pct / A1_lag1p5pct / A1_lag2pct / A1_lag2p5pct.
+    a_lag_threshold_sweep: tuple[float, ...] = (0.010, 0.015, 0.020, 0.025)
 
     # Matched-random baseline knobs (docx gate 8).
     random_baseline_draws: int = 100
@@ -1103,6 +1108,20 @@ def _collect_direction_a_signals(
         for candidate_code in A_CANDIDATES:
             signals = _emit_direction_a_signals(events, group, candidate_code, cfg)
             for sig in signals:
+                rows.extend(_execute_direction_a(group, sig, cfg))
+        # A1 threshold sweep: re-run A1 logic at each lag threshold and tag
+        # the candidate code with the threshold suffix so the discipline view
+        # can see whether the alpha generalizes across thresholds.
+        original_lag = cfg.a_bybit_lag_max_drop_pct
+        for thr in cfg.a_lag_threshold_sweep:
+            if abs(thr - original_lag) < 1e-9:
+                # Already covered by the canonical A1 above.
+                continue
+            sweep_cfg = replace(cfg, a_bybit_lag_max_drop_pct=thr)
+            tag = f"lag{int(thr * 1000):d}bp"
+            signals = _emit_direction_a_signals(events, group, CANDIDATE_A1, sweep_cfg)
+            for sig in signals:
+                sig["candidate_code"] = f"A1_{tag}"
                 rows.extend(_execute_direction_a(group, sig, cfg))
         if i % 25 == 0:
             print(f"v7S Direction A: {i}/{len(symbols)} symbols, {len(rows)} executions", flush=True)
