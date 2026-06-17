@@ -168,6 +168,8 @@ class V7SConfig:
 
     # Direction E NEW gates.
     e_beta_high_lookback_bars: int = 16  # 4h: how far back must beta_high have been to count as "gone"
+    e_beta_high_ret_percentile: float = 85.0  # ret_4h_percentile threshold for "was hot"
+    e_beta_high_cooled_percentile: float = 50.0  # ret_4h_percentile cap for "cooled now"
     e_sell_flow_window: str = "reclaim_bar"  # which orderflow window to read
     e_sell_flow_max_imbalance: float = -0.05  # net taker imbalance must be sell-leaning
     # If orderflow is unavailable, fail_open=True lets the gate pass with an
@@ -191,38 +193,60 @@ class V7SConfig:
 
 
 def _gate_beta_high_gone(group: pd.DataFrame, idx: int, cfg: V7SConfig) -> bool:
-    """``beta_high environment 消失``: beta was extreme/extended at the CIC
-    long entry and is NO LONGER extreme/extended at the break bar ``idx``.
+    """``beta_high environment 消失``: the high-beta market regime that
+    sponsored the CIC long is behind us at the break bar.
 
-    Two columns may be present:
+    The v7s docx phrasing is a *market-regime* observation, not a
+    per-symbol percentile read. Three layered proxies are tried in order;
+    the first available source wins:
 
-    - ``gate_beta_already_extended`` (v07c) — bool flag
-    - ``c2_bucket_beta_extreme_overextended`` (v07c2) — bucket label
+    1. **v07c semantic** — if ``gate_beta_already_extended`` (or
+       ``c2_bucket_beta_extreme_overextended``) is in the parquet, fire
+       when the flag was True in ``[idx - lookback, idx)`` and False
+       at idx. The raw v0.3 parquet typically does NOT carry this.
 
-    The gate fires when either flag was True somewhere in
-    ``[idx - lookback, idx)`` AND is False at ``idx``. Missing columns
-    fail closed.
+    2. **BTC volatility regime** — ``btc_vol_regime`` transitioned from
+       ``high_vol`` somewhere in the lookback to non-``high_vol`` at idx.
+       This is the closest direct proxy because beta-extreme regimes
+       coincide with high-vol BTC periods.
+
+    3. **BTC market state** — ``btc_market_state`` was ``BTC_up``
+       somewhere in the lookback and is NOT ``BTC_up`` at idx. A weaker
+       proxy used as fallback when ``btc_vol_regime`` is missing.
+
+    Missing all three sources fails closed.
     """
     lookback = cfg.e_beta_high_lookback_bars
     if idx <= 0:
         return False
     start = max(0, idx - lookback)
-    flag_now = None
-    flag_past_max = None
-    if "gate_beta_already_extended" in group.columns:
-        flags = _b(group, "gate_beta_already_extended")
+
+    if "gate_beta_already_extended" in group.columns or "c2_bucket_beta_extreme_overextended" in group.columns:
+        flag_col = "gate_beta_already_extended" if "gate_beta_already_extended" in group.columns else "c2_bucket_beta_extreme_overextended"
+        flags = _b(group, flag_col)
         if idx < len(flags) and start < len(flags):
-            flag_now = bool(flags[idx])
-            flag_past_max = bool(flags[start:idx].any())
-    if flag_now is None and "c2_bucket_beta_extreme_overextended" in group.columns:
-        # Boolean column derived from bucket label; treat truthy as extended.
-        flags = _b(group, "c2_bucket_beta_extreme_overextended")
-        if idx < len(flags) and start < len(flags):
-            flag_now = bool(flags[idx])
-            flag_past_max = bool(flags[start:idx].any())
-    if flag_now is None or flag_past_max is None:
-        return False
-    return bool(flag_past_max and not flag_now)
+            return bool(flags[start:idx].any() and not flags[idx])
+
+    if "btc_vol_regime" in group.columns:
+        s = group["btc_vol_regime"].astype(str)
+        if idx < len(s) and start < len(s):
+            window = s.iloc[start:idx]
+            was_hot = bool((window == "high_vol").any())
+            cooled_now = bool(s.iloc[idx] != "high_vol")
+            if was_hot and cooled_now:
+                return True
+            if was_hot and not cooled_now:
+                return False
+
+    if "btc_market_state" in group.columns:
+        s = group["btc_market_state"].astype(str)
+        if idx < len(s) and start < len(s):
+            window = s.iloc[start:idx]
+            was_up = bool((window == "BTC_up").any())
+            cooled_now = bool(s.iloc[idx] != "BTC_up")
+            return was_up and cooled_now
+
+    return False
 
 
 def _gate_sell_flow_confirms(
