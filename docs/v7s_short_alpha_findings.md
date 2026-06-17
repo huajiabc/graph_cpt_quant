@@ -1,31 +1,44 @@
 # v7S Short Alpha Exploration — findings
 
-**Status: Directions E + D + A complete. A1_imb10bp h24 is v7S's first
-`promote`-tier candidate — all 10 gates pass, including the closure
-doc's reopen criteria. Cross-exchange downside lead-lag is the
-empirically valid short-alpha thesis on this universe.**
+**Status: Directions E + D + A complete + A1_imb10bp validation done.
+A1_imb10bp h24 is the strongest cell at 9/10 gates after the
+post-validation gate5 tightening — single-month concentration
+(2025-10 = 63.7 % of total alpha) disqualifies it under the closure
+doc's reopen §1. NO promote-tier short candidate emerged from v7S.**
 
 Headline:
 
-- **A1_imb10bp h24** (Binance shock_bar imbalance ≤ -0.10, Bybit lag
-  ≤ 1.5 %): N=56, gross +1.49 %, net20 +1.18 %, net30 +0.98 %
+- **A1_imb10bp h24**: N=56, gross +1.49 %, net20 +1.18 %, net30 +0.98 %
   (cost-robust), win 75 %, hit_down_3pct 48.2 %, squeeze 8.9 %,
-  max_symbol_share 14.2 %, month_capped_net +0.40, all 10 gates pass,
-  **verdict = `promote`**.
-- A1 canonical (impulse ≤ -0.15): 8/10 gates pass — fails gate5
-  (month_cap) and gate7 (symbol_share 35.4 %) at smaller sample.
+  max_symbol_share 14.2 %. **9/10 gates pass** — fails only the
+  tightened gate5 (best_month_share = 63.7 % > 35 %). Bootstrap 95 % CI
+  on mean_net20 = `[-0.40 %, +2.52 %]` — straddles zero, P(>0) = 93 %.
+  Walk-forward over disjoint thirds: bucket 0 mean_net20 = -1.19 %
+  (negative), buckets 1+2 = +2.75 % / +2.01 %. **Verdict = no_value
+  on gate5 alone; non-stationary signal that emerged in 2025-Q4.**
+- A1 canonical (impulse ≤ -0.15): 8/10 gates fail — gate5 + gate7.
 - A0 control (no filter): -41 to -205 bps gross — confirms the filter,
-  not bar selection, supplies the edge.
+  not bar selection, supplies what alpha there is.
 - Direction E: all candidates `no_value` (closure doc reconfirmed).
 - Direction D: all 30 cells `no_value` (pair hedging HURTS naked alpha
   in this universe).
 
-The `promote` verdict on A1_imb10bp h24 is the first short-side
-research result post-closure to clear the docx 10-gate battery on this
-data. Counterintuitively, LOOSER Binance impulse (-0.10 vs canonical
--0.15) produces a more diversified sample (more symbols, broader
-months) which clears both gate5 and gate7 mechanically while
-maintaining a 75 % hit rate and net30 of +0.98 %.
+### gate5 methodology correction
+
+The first cut of `_evaluate_gates` implemented gate5 as
+`month_capped_net > 0`, which was a softer test than the closure
+doc's reopen §1 wording ("no single month contributes ≥ 35 % of the
+alpha"). A1_imb10bp h24 had month_capped_net = +0.40 (positive) but
+best_month_share = 63.7 % — a clear violation of §1's intent. The
+walk-forward validation (`scripts/v7s_a1_validation.py`) surfaced the
+non-stationarity, which triggered tightening gate5 to require BOTH
+`month_capped_net > 0` AND `best_month_share ≤ 0.35`. Under the
+tightened gate5, A1_imb10bp h24 correctly verdicts `no_value`.
+
+This correction is a real research finding in itself: any future
+short-alpha gate evaluator must include a best-month-share check, or
+the headline cell will look promotable when it's actually
+single-regime concentrated.
 
 > Lane opened per the docx mandate to explore short alpha orthogonal to
 > the closed v12s / v3.4 / v4S / v6S motif thread. The closure doc
@@ -240,23 +253,70 @@ but defensible mechanically.
 
 ### Verdict
 
-Direction A verdict: **A1_imb10bp h24 = `promote`**. This is the first
-short-side candidate post-closure-doc to pass the docx 10-gate
-battery. All other A cells remain `no_value` or worse.
+Direction A verdict: **A1_imb10bp h24 = `no_value` (tightened gate5
+post-validation)**. The signal is real but non-stationary — a single
+month (2025-10) carries 64 % of the total alpha. No v7S candidate
+clears the closure doc's reopen criteria.
 
-Next steps from here are validation rather than further exploration:
+### Validation results (from `scripts/v7s_a1_validation.py`)
 
-1. **Walk-forward** the A1_imb10bp gate over disjoint time windows to
-   verify the alpha isn't a single-regime artefact.
-2. **Bootstrap CI** on the +1.18 % net20 — with N=56 the standard
-   error matters.
-3. **Tighten Bybit lag** asymmetrically (try lag 1.0 % at impulse -0.10)
-   to see if the combined sweep raises hit_3pct further.
-4. **Replay on next month's data** as a one-shot OOS check before any
-   shadow-recorder wiring.
+Walk-forward over three disjoint thirds (by signal_time order):
 
-These are validation tasks, not exploration tasks. The lane has produced
-its first valid candidate; the next commit should harden it.
+| bucket | window | N | mean_net20 | win_rate |
+|---|---|---|---|---|
+| 0 | 2025-07-14 → 2025-10-11 | 19 | **-1.19 %** | 68.4 % |
+| 1 | 2025-10-11 → 2026-01-13 | 19 | +2.75 % | 84.2 % |
+| 2 | 2026-01-14 → 2026-06-02 | 18 | +2.01 % | 72.2 % |
+
+Bucket 0 LOSES money — the alpha emerged in 2025-Q4 and persisted
+through Q1 2026. Pre-Q4 the same gate combination doesn't pay.
+
+Bootstrap (5000 resamples, seed = 20260617):
+
+- N = 56, mean net20 = +1.18 %
+- 95 % CI: `[-0.40 %, +2.52 %]` — straddles zero.
+- P(mean > 0) = 0.930.
+
+CI overlap with zero means the +1.18 % isn't significant at 95 %
+under bootstrap. With N=56, the standard error is large enough that
+the observed mean could be a sampling artefact.
+
+Per-month breakdown (9 months, 4 positive / 5 negative or flat):
+
+| month | N | sum_net20 | win |
+|---|---|---|---|
+| 2025-07 | 12 | **-0.174** | 75.0 % |
+| 2025-09 | 3 | -0.078 | 0.0 % |
+| 2025-10 | 13 | **+0.419** | 100 % |
+| 2025-11 | 2 | -0.000 | 50.0 % |
+| 2025-12 | 3 | +0.129 | 100 % |
+| 2026-01 | 11 | +0.298 | 81.8 % |
+| 2026-03 | 3 | -0.081 | 33.3 % |
+| 2026-05 | 8 | +0.157 | 75.0 % |
+| 2026-06 | 1 | -0.011 | 0.0 % |
+
+Best month (2025-10) is **63.7 %** of total net — the closure doc's
+35 % §1 bar is broken nearly 2x.
+
+### Next steps from here
+
+1. **Regime detection.** The 2025-10 dominance suggests a Q4 cross-
+   exchange info-flow regime. A regime gate (e.g. BTC realised vol
+   high + funding crowded) on top of A1 could isolate the productive
+   regime and skip the loser months. That's the natural next R&D step.
+2. **Continuous Binance CVD backfill.** The current event base is 574
+   CIC-anchored rows. Continuous CVD aggregates from raw aggTrades
+   archives would multiply the sample by ~100×, which would also
+   shrink the bootstrap CI and clarify whether the signal is truly
+   stationary or a single-quarter regime artefact.
+3. **OOS replay on freshly-arriving months.** Schedule the once-script
+   on a rolling basis and stamp each new month's contribution against
+   the A1_imb10bp h24 gate. After 6 fresh positive months the gate5
+   tightening would clear mechanically.
+4. **STOP iterating thresholds on the same 574-event tape.** The
+   threshold sweep has converged: -0.10/-0.15/-0.20/-0.25 × 1.0/1.5/
+   2.0/2.5 % covers the productive corner. Further tuning here is
+   overfitting.
 
 ## Direction E — strict CIC-failure-confirmed (previously closed)
 

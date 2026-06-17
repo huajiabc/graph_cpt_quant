@@ -1811,7 +1811,18 @@ def _evaluate_gates(
 
         m = month_by_key.get(key, {})
         capped = float(m.get("month_capped_net", float("nan")))
-        gate5 = np.isfinite(capped) and capped > 0
+        best_month_share = float(m.get("best_month_share", float("nan")))
+        # Closure-doc reopen §1: ≥3-month-distributed sample — no single
+        # month contributes ≥ 35 % of the alpha. The earlier evaluator
+        # checked only capped_net > 0 which let A1_imb10bp h24 pass
+        # despite a single month carrying 63.7 % of the total. Tightened
+        # to require BOTH: capped > 0 AND best_month_share ≤ month_cap_pct.
+        gate5 = (
+            np.isfinite(capped)
+            and capped > 0
+            and np.isfinite(best_month_share)
+            and best_month_share <= cfg.month_cap_pct
+        )
         if not gate5:
             failures.append("gate5")
         out.at[i, "gate5_month_cap_positive"] = bool(gate5)
