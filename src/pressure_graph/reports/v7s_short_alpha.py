@@ -138,6 +138,19 @@ D_CANDIDATES: tuple[str, ...] = (
     CANDIDATE_D4,
 )
 
+# Direction A candidate codes — cross-exchange downside lead-lag short.
+# Source venue = Binance UM (lead); target venue = Bybit (lag). Hyperliquid
+# leg (A3 per docx) is deferred until a Hyperliquid tape source is wired.
+CANDIDATE_A0 = "A0_no_filter"                              # control: short whenever an event fires
+CANDIDATE_A1 = "A1_binance_sell_impulse_bybit_lag"         # shock_bar Binance sell + Bybit still high
+CANDIDATE_A2 = "A2_binance_breakdown_bybit_failed_reclaim"  # pullback+reclaim Binance sell + Bybit failed reclaim
+
+A_CANDIDATES: tuple[str, ...] = (
+    CANDIDATE_A0,
+    CANDIDATE_A1,
+    CANDIDATE_A2,
+)
+
 
 @dataclass(frozen=True)
 class V7SConfig:
@@ -149,9 +162,10 @@ class V7SConfig:
     long_pool_name: str = "P2_CIC1_CIC2_COMBINED"
     top_n: int = 30
 
-    # Which directions to execute this run. E + D are wired; A/B/C remain
-    # NotImplementedError-stubbed.
-    enabled_directions: tuple[str, ...] = (DIRECTION_E, DIRECTION_D)
+    # Which directions to execute this run. E + D + A are wired; B/C remain
+    # NotImplementedError-stubbed (B needs liquidation tape; C needs CVD
+    # divergence labels not yet exported).
+    enabled_directions: tuple[str, ...] = (DIRECTION_E, DIRECTION_D, DIRECTION_A)
 
     # Direction E sleeve specs — kept inline so the strict gates are visible
     # at config-read time (`grep -n E_SLEEVES` finds the active surface).
@@ -217,6 +231,18 @@ class V7SConfig:
     # the discipline view can compare with vs without failure confirmation
     # (docx §核心对照 item 7).
     d_include_no_confirmation: bool = True
+
+    # Direction A — cross-exchange downside lead-lag short.
+    # Source venue = Binance UM (lead); target venue = Bybit (lag). Hyperliquid
+    # leg (A3 per docx) is deferred until a Hyperliquid tape source is wired.
+    a_binance_sell_impulse_max: float = -0.15  # shock_bar buy_sell_imbalance below this → Binance sell impulse
+    a_binance_breakdown_max: float = -0.05  # pullback+reclaim both below this → Binance breakdown sustained
+    a_bybit_lag_max_drop_pct: float = 0.015  # Bybit close drop ≤ 1.5 % over lookback → Bybit lagging
+    a_bybit_failed_reclaim_pct: float = 0.005  # Bybit recovered < 0.5 % from window low → failed reclaim
+    a_lookback_bars_for_lag: int = 4  # 1 h: window for Bybit price-action read
+    a_holding_horizons_bars: tuple[int, ...] = (16, 48, 96)  # 4h / 12h / 24h
+    a_event_orderflow_path: Path = ORDERFLOW_EVENT_PATH  # reuse Direction E's lookup
+    a_exclude_leader_symbols: bool = True  # do not short BTC/ETH/SOL/BNB
 
     # Matched-random baseline knobs (docx gate 8).
     random_baseline_draws: int = 100
@@ -853,6 +879,233 @@ def _collect_direction_d_signals(
                     rows.append(r)
         if i % 25 == 0:
             print(f"v7S Direction D: {i}/{len(symbols)} symbols, {len(rows)} executions", flush=True)
+    return pd.DataFrame(rows)
+
+
+# --------------------------------------------------------------------------------------
+# Direction A — cross-exchange downside lead-lag short (Binance → Bybit)
+# --------------------------------------------------------------------------------------
+
+
+def _gate_binance_sell_impulse(payload: dict, cfg: V7SConfig) -> bool:
+    """Shock-bar Binance buy_sell_imbalance ≤ ``a_binance_sell_impulse_max``.
+
+    Reads the v11 cic_event_orderflow payload; missing field fails closed."""
+    val = payload.get("shock_bar_buy_sell_imbalance")
+    if val is None or not np.isfinite(val):
+        return False
+    return bool(float(val) <= cfg.a_binance_sell_impulse_max)
+
+
+def _gate_binance_breakdown_sustained(payload: dict, cfg: V7SConfig) -> bool:
+    """Both pullback_window and reclaim_bar Binance buy_sell_imbalance are
+    sell-leaning (≤ ``a_binance_breakdown_max``). Reads cic_event_orderflow."""
+    pb = payload.get("pullback_window_buy_sell_imbalance")
+    rc = payload.get("reclaim_bar_buy_sell_imbalance")
+    if pb is None or rc is None or not (np.isfinite(pb) and np.isfinite(rc)):
+        return False
+    return bool(float(pb) <= cfg.a_binance_breakdown_max and float(rc) <= cfg.a_binance_breakdown_max)
+
+
+def _gate_bybit_lagging(group: pd.DataFrame, idx: int, cfg: V7SConfig) -> bool:
+    """At bar ``idx`` Bybit hasn't dropped much vs ``a_lookback_bars_for_lag``
+    bars ago (drop ≤ ``a_bybit_lag_max_drop_pct``)."""
+    close = _f(group, "close")
+    if idx >= len(close) or idx < cfg.a_lookback_bars_for_lag:
+        return False
+    past_close = float(close[idx - cfg.a_lookback_bars_for_lag])
+    cur_close = float(close[idx])
+    if not (np.isfinite(past_close) and np.isfinite(cur_close)) or past_close <= 0:
+        return False
+    drop_pct = (past_close - cur_close) / past_close
+    return bool(drop_pct <= cfg.a_bybit_lag_max_drop_pct)
+
+
+def _gate_bybit_failed_reclaim(group: pd.DataFrame, idx: int, cfg: V7SConfig) -> bool:
+    """Bybit recovered less than ``a_bybit_failed_reclaim_pct`` from its low in
+    the lookback window — failed to reclaim."""
+    high = _f(group, "high")
+    low = _f(group, "low")
+    close = _f(group, "close")
+    if idx >= len(close) or idx < cfg.a_lookback_bars_for_lag:
+        return False
+    start = idx - cfg.a_lookback_bars_for_lag
+    window_low = float(np.nanmin(low[start : idx + 1]))
+    cur_close = float(close[idx])
+    if not (np.isfinite(window_low) and np.isfinite(cur_close)) or window_low <= 0:
+        return False
+    recovered = (cur_close - window_low) / window_low
+    return bool(recovered < cfg.a_bybit_failed_reclaim_pct)
+
+
+def _emit_direction_a_signals(
+    events: pd.DataFrame,
+    group: pd.DataFrame,
+    candidate_code: str,
+    cfg: V7SConfig,
+) -> list[dict[str, object]]:
+    """Direction A entry stream — scan cic_event_orderflow rows for this
+    symbol, apply the candidate's gate combination, emit short entries."""
+    rows: list[dict[str, object]] = []
+    if events.empty or group.empty:
+        return rows
+    symbol = str(group["symbol"].iloc[0])
+    sub = events[events["symbol"].astype(str) == symbol]
+    if sub.empty:
+        return rows
+    if cfg.a_exclude_leader_symbols and symbol in set(cfg.d_leader_pool):
+        return rows
+    feature_time = pd.to_datetime(group["feature_time"], utc=True, errors="coerce")
+    bar_open_time = pd.to_datetime(group["bar_open_time"], utc=True, errors="coerce")
+    feature_ns = feature_time.astype("int64").to_numpy()
+    n = len(group)
+    for _, ev in sub.iterrows():
+        signal_time = pd.to_datetime(ev.get("signal_time"), utc=True, errors="coerce")
+        if pd.isna(signal_time):
+            continue
+        ts_ns = int(signal_time.value)
+        idx = int(np.searchsorted(feature_ns, ts_ns, side="left"))
+        if idx >= n - 1:
+            continue
+        # Match exact bar (searchsorted gives insertion point; ensure bar_open_time matches)
+        if idx < len(feature_ns) and feature_ns[idx] != ts_ns:
+            # Try idx - 1 if close
+            if idx > 0 and feature_ns[idx - 1] == ts_ns:
+                idx = idx - 1
+            else:
+                continue
+
+        payload = ev.to_dict()
+        gate_audit = "ok"
+        if candidate_code == CANDIDATE_A0:
+            pass  # control — no filter
+        elif candidate_code == CANDIDATE_A1:
+            if not _gate_binance_sell_impulse(payload, cfg):
+                continue
+            if not _gate_bybit_lagging(group, idx, cfg):
+                continue
+        elif candidate_code == CANDIDATE_A2:
+            if not _gate_binance_breakdown_sustained(payload, cfg):
+                continue
+            if not _gate_bybit_failed_reclaim(group, idx, cfg):
+                continue
+        else:
+            continue
+
+        entry_idx = idx + 1
+        if entry_idx >= n:
+            continue
+        rows.append(
+            {
+                "direction": DIRECTION_A,
+                "candidate_code": candidate_code,
+                "sleeve_code": candidate_code,
+                "sleeve_name": candidate_code,
+                "exchange": str(group.iloc[idx].get("exchange", "")),
+                "symbol": symbol,
+                "motif_code": "",
+                "anchor_idx": int(idx),
+                "confirmation_idx": int(idx),
+                "break_idx": int(idx),
+                "entry_idx": int(entry_idx),
+                "anchor_feature_time": feature_time.iloc[idx],
+                "signal_time": feature_time.iloc[idx],
+                "entry_time": bar_open_time.iloc[entry_idx],
+                "reference_low": float(_f(group, "close")[idx]) if idx < len(_f(group, "close")) else float("nan"),
+                "month": (
+                    feature_time.iloc[idx].strftime("%Y-%m")
+                    if pd.notna(feature_time.iloc[idx])
+                    else ""
+                ),
+                "btc_state": str(group.iloc[idx].get("btc_market_state", "")),
+                "binance_shock_imbalance": float(payload.get("shock_bar_buy_sell_imbalance", float("nan"))),
+                "binance_pullback_imbalance": float(payload.get("pullback_window_buy_sell_imbalance", float("nan"))),
+                "binance_reclaim_imbalance": float(payload.get("reclaim_bar_buy_sell_imbalance", float("nan"))),
+                "audit_reason": gate_audit,
+            }
+        )
+    return rows
+
+
+def _execute_direction_a(
+    group: pd.DataFrame,
+    signal: dict,
+    cfg: V7SConfig,
+) -> list[dict[str, object]]:
+    """Short Bybit at next bar; emit one row per fixed horizon (h4/h12/h24).
+
+    Single-leg short execution (n_legs=1) — same cost model as Direction E
+    and Direction D's naked baseline.
+    """
+    entry_idx = int(signal.get("entry_idx", -1))
+    open_arr = _f(group, "open")
+    close_arr = _f(group, "close")
+    if entry_idx < 0 or entry_idx >= len(open_arr):
+        return []
+    entry_price = float(open_arr[entry_idx])
+    if not np.isfinite(entry_price) or entry_price <= 0:
+        return []
+    rows: list[dict[str, object]] = []
+    for horizon in cfg.a_holding_horizons_bars:
+        exit_idx = entry_idx + horizon
+        if exit_idx >= len(close_arr):
+            continue
+        exit_price = float(close_arr[exit_idx])
+        if not np.isfinite(exit_price):
+            continue
+        gross = (entry_price - exit_price) / entry_price
+        row = dict(signal)
+        row.update(
+            {
+                "execution": f"h{horizon * 15 // 60}",
+                "holding_bars": int(horizon),
+                "gross_return": float(gross),
+                "entry_price": float(entry_price),
+                "exit_price": float(exit_price),
+                "exit_reason": "horizon",
+            }
+        )
+        rows.append(row)
+    return rows
+
+
+def _collect_direction_a_signals(
+    feature_path: Path,
+    rank30: pd.DataFrame,
+    rank90: pd.DataFrame,
+    config: ExperimentConfig,
+    cfg: V7SConfig,
+) -> pd.DataFrame:
+    """Stream Direction A events × 3 candidates × 3 horizons across the universe."""
+    if not cfg.a_event_orderflow_path.exists():
+        print(f"v7S Direction A: orderflow event parquet missing — skipping.", flush=True)
+        return pd.DataFrame()
+    events = read_parquet(cfg.a_event_orderflow_path)
+    if events.empty or "symbol" not in events.columns or "signal_time" not in events.columns:
+        print(f"v7S Direction A: orderflow event frame empty/malformed — skipping.", flush=True)
+        return pd.DataFrame()
+    print(f"v7S Direction A: orderflow events loaded = {len(events)}", flush=True)
+
+    symbols = sorted(
+        rank30[pd.to_numeric(rank30["dynamic_all_rank"], errors="coerce") <= cfg.top_n]["symbol"]
+        .dropna()
+        .astype(str)
+        .unique()
+    )
+    rows: list[dict[str, object]] = []
+    for i, symbol in enumerate(symbols, start=1):
+        if cfg.a_exclude_leader_symbols and symbol in set(cfg.d_leader_pool):
+            continue
+        group = _read_symbol_features(feature_path, rank30, rank90, symbol, config)
+        if group.empty:
+            continue
+        group = group.sort_values("bar_open_time").reset_index(drop=True)
+        for candidate_code in A_CANDIDATES:
+            signals = _emit_direction_a_signals(events, group, candidate_code, cfg)
+            for sig in signals:
+                rows.extend(_execute_direction_a(group, sig, cfg))
+        if i % 25 == 0:
+            print(f"v7S Direction A: {i}/{len(symbols)} symbols, {len(rows)} executions", flush=True)
     return pd.DataFrame(rows)
 
 
@@ -1628,7 +1881,7 @@ def _write_candidate_notes(
 # --------------------------------------------------------------------------------------
 
 
-SUPPORTED_DIRECTIONS: tuple[str, ...] = (DIRECTION_E, DIRECTION_D)
+SUPPORTED_DIRECTIONS: tuple[str, ...] = (DIRECTION_E, DIRECTION_D, DIRECTION_A)
 
 
 def write_v7s_short_alpha(
@@ -1700,6 +1953,12 @@ def write_v7s_short_alpha(
         )
         if not d_trades.empty:
             all_trades.append(d_trades)
+    if DIRECTION_A in cfg.enabled_directions:
+        a_trades = _collect_direction_a_signals(
+            feature_path, rank30, rank90, config, cfg
+        )
+        if not a_trades.empty:
+            all_trades.append(a_trades)
 
     trades = (
         pd.concat(all_trades, ignore_index=True) if all_trades else pd.DataFrame()

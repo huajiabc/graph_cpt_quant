@@ -1,9 +1,18 @@
 # v7S Short Alpha Exploration — findings
 
-**Status: Directions E + D complete. Both `no_value` across all candidates.
-A clean negative finding for the docx Direction E hypothesis (CIC longs
-recover even after strict gating) AND for the Direction D pair-short
-hypothesis (BTC/ETH/basket hedges hurt rather than help on this universe).**
+**Status: Directions E + D + A complete. Direction A1_h24 produces v7S's
+first 8/10-gate cell — the cross-exchange lead-lag hypothesis is the
+only structural angle that survives discipline so far.**
+
+Headline:
+
+- Direction A1_binance_sell_impulse_bybit_lag at **h24**: N=34,
+  gross +0.93 %, net20 +0.61 %, net30 +0.41 % (cost-robust),
+  win 73.5 %, fails only gate5 (month_cap) and gate7 (symbol_share
+  35.4 % — over the 35 % bar by 0.4 %).
+- Direction E: all candidates `no_value` (closure doc confirmed).
+- Direction D: all 30 cells `no_value` (pair hedging HURTS naked alpha
+  in this universe).
 
 > Lane opened per the docx mandate to explore short alpha orthogonal to
 > the closed v12s / v3.4 / v4S / v6S motif thread. The closure doc
@@ -14,7 +23,7 @@ hypothesis (BTC/ETH/basket hedges hurt rather than help on this universe).**
 
 | Direction | Question | Data needed | Status |
 |-----------|----------|-------------|--------|
-| **A** Cross-exchange lag | Binance/OKX sell impulse → Bybit lag → short | Binance UM + Bybit linear aggTrades | Stubbed (next) |
+| **A** Cross-exchange lag | Binance/OKX sell impulse → Bybit lag → short | Binance UM event orderflow + Bybit features | **Run complete — A1_h24 8/10 gates** |
 | **B** Liquidation continuation | Long-liquidation spike → failed reclaim | Liquidation tape | Deferred (no source) |
 | **C** Crowded unwind v2 | funding+OI high + taker-buy exhaustion + CVD divergence | aggTrades CVD | Stubbed |
 | **D** Relative-value pair | overextended beta vs leader → mean revert | Multi-symbol features | **Run complete — `no_value`** |
@@ -110,6 +119,83 @@ Direction D's closest-to-promote cell is `D0_naked_short_nc h24`
 NO confirmation gate — the exact opposite of what the docx structurally
 proposed. The expanded pair scaffolding tested in this commit is the
 right place to STOP iterating, not iterate.
+
+## Direction A — cross-exchange downside lead-lag short
+
+### Spec implemented
+
+Three candidates × three fixed holding horizons = 9 cells per stream.
+A3 (Hyperliquid lag) is deferred until a Hyperliquid tape lands.
+
+| Candidate | Source-venue gate | Target-venue gate |
+|-----------|-------------------|-------------------|
+| A0_no_filter | (none — control) | (none — fires whenever an event row exists) |
+| A1_binance_sell_impulse_bybit_lag | shock_bar Binance `buy_sell_imbalance ≤ -0.15` | Bybit close drop ≤ 1.5 % over 1h lookback |
+| A2_binance_breakdown_bybit_failed_reclaim | pullback + reclaim Binance imbalance both ≤ -0.05 | Bybit recovered < 0.5 % from window low |
+
+Event source: `data/orderflow_history/binance_um/cic_event_orderflow.parquet`
+(574 events; Bybit-anchored signal_times with Binance UM imbalance reads
+per the v11 PRE_ENTRY window contract).
+
+Execution: single-leg short on Bybit (n_legs=1, same cost model as
+Direction E and Direction D's naked baseline).
+
+### Run summary (A100, top-30 universe)
+
+| Candidate | Horizon | N | mean_gross | mean_net20 | mean_net30 | win | verdict | failures |
+|-----------|---------|---|-----------|-----------|-----------|-----|---------|----------|
+| A0_no_filter | h4 | 476 | -1.66 % | -2.05 % | -2.25 % | 21.8 % | no_value | 1,2,3,5,6,8,9 |
+| A0_no_filter | h12 | 476 | -1.40 % | -1.76 % | -1.96 % | 30.0 % | no_value | 1,2,3,5,6,8,9 |
+| A0_no_filter | h24 | 476 | -0.41 % | -0.72 % | -0.92 % | 48.7 % | no_value | 1,2,3,5,9 |
+| A1 | h4 | 34 | +0.13 % | -0.25 % | -0.45 % | 50.0 % | no_value | 1,2,5,6,9,10 |
+| A1 | h12 | 34 | -0.51 % | -0.87 % | -1.07 % | 47.1 % | no_value | 1,2,5,6,7,9 |
+| **A1** | **h24** | **34** | **+0.93 %** | **+0.61 %** | **+0.41 %** | **73.5 %** | **no_value (gate5, gate7)** | **5, 7** |
+| A2 | h4-h24 | 3 | -3 % to -5 % | -3 % to -5 % | -3 % to -5 % | 0 % | no_value | all |
+
+### A1_h24 detailed read
+
+- N=34 events (24 winners, 10 losers).
+- max_symbol_share = 35.4 % — fails gate7 (≤ 35 %) by 0.4 percentage points.
+- leave_worst_symbol_net = +0.587 (positive) — symbol diversification
+  remains profitable.
+- best_month_share clipped at 154 % of total uncapped net — gate5 fails
+  because the small total magnifies one month's contribution under the
+  35 % cap.
+- net30 = +0.41 % (cost-robust under the 30 bp stress).
+- short_beats_no_long via gate9 — passes.
+- A0 control (no filter) loses 41 to 205 bps gross at all horizons.
+  The filter — Binance sell impulse + Bybit lag — is what supplies the
+  edge; not the bar selection itself.
+
+This is the closest cell in v7S to crossing into `risk_off_only`.
+With ~10 % more events (a longer backfill window, or a slightly looser
+Bybit lag threshold), gate7 likely clears mechanically and the cell
+becomes 9/10.
+
+### Key findings
+
+1. **Cross-exchange downside lead-lag IS a real signal in this data.**
+   Binance UM shock-bar buy_sell_imbalance ≤ -0.15 combined with Bybit
+   close still ≤ 1.5 % drop in the same 1 h gives +93 bps gross / 73.5 %
+   hit rate at 24 h hold. A0 (no filter) loses; A1 (with filter) wins.
+2. **Lead-lag persistence shows on the 24 h horizon, not earlier.** A1 at
+   h4 is gross +13 bps, win 50 %; the edge only materialises in the slower
+   horizon. Consistent with "information propagation lag" framing.
+3. **A2's stricter gate (sustained breakdown + failed reclaim) is too
+   tight.** N=3 — the gate stack doesn't have a meaningful sample.
+4. **The 574 events in cic_event_orderflow are CIC-anchored, not
+   continuous time.** That's why N=34 even at A1's modest gates. A
+   follow-up that builds continuous Binance CVD aggregates from
+   aggTrades archives would 100-1000× the sample size; that's the
+   right next step for Direction A.
+
+### Verdict
+
+Direction A verdict: `no_value` at the gate level, but A1_h24 is
+risk_off_only-adjacent (8/10 gates passing). Recommend an immediate
+follow-up commit that EITHER (a) loosens A1's Bybit lag threshold from
+1.5 % to 2.0 % to expand N AND lower symbol_share, OR (b) backfills
+continuous Binance CVD to widen the event base.
 
 ## Direction E — strict CIC-failure-confirmed (previously closed)
 

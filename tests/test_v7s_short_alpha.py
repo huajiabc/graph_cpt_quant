@@ -393,12 +393,12 @@ class TestPairCost:
 
 
 class TestUnimplementedDirections:
-    def test_direction_a_raises_not_implemented(self, tmp_path: Path) -> None:
+    def test_direction_b_raises_not_implemented(self, tmp_path: Path) -> None:
         cfg = V7SConfig(
             report_root=tmp_path / "v7s_short_alpha",
-            enabled_directions=("A_cross_exchange_lag",),
+            enabled_directions=("B_liquidation_continuation",),
         )
-        with pytest.raises(NotImplementedError, match="Direction A"):
+        with pytest.raises(NotImplementedError, match="Direction B"):
             write_v7s_short_alpha(
                 feature_path=tmp_path / "missing.parquet",
                 instruments=pd.DataFrame(),
