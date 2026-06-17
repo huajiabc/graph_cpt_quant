@@ -418,18 +418,59 @@ D2_btc_cvd_pair does NOT pay — same conclusion as the old D1_pair_btc:
 beta and BTC are too correlated, the hedge cost wipes the signal.
 Only the ETH-hedge variant produces meaningful flow asymmetry.
 
-### What's pending (backfills running locally with proxy)
+### D2 v2 rerun (6 months of data: 2025-07 → 2025-10) — REFUTED
 
-Two backfills launched in background to settle whether the 2025-10
-regime was unique or recurs:
+Backward window (2025-06-01 → 2025-09-14, 848 tasks) completed
+locally with proxy. After re-running D2 on the 6-month sample:
 
-1. **Backward window** 2025-06-01 → 2025-09-14 (848 tasks): tests
-   if D2 alpha was absent in the pre-Q4 baseline.
-2. **Forward window** 2025-11-16 → 2026-06-01 (1584 tasks): provides
-   OOS months to test if the alpha persists.
+| candidate | h24 N | net20 | bootstrap CI | p(>0) | walk-forward min | verdict |
+|---|---|---|---|---|---|---|
+| D2_eth h24 (3-mo, prior) | 30 | +269 bps | [+0.96, +4.38] | 0.999 | -1.16% | no_value |
+| **D2_eth h24 (6-mo)** | **102** | **-9 bps** | **[-1.62, +1.25]** | **0.465** | **-2.40%** | **no_value** |
+| D2_eth h12 (6-mo) | 102 | -36 bps | [-1.33, +0.56] | 0.237 | -0.93% | no_value |
+| **D2_eth h4 (6-mo)** | **102** | **-51 bps** | **[-0.95, -0.01]** | **0.025** | **-1.16%** | **no_value** |
+| D2_btc h24 (6-mo) | 66 | -48 bps | [-2.91, +1.88] | 0.355 | -5.11% | no_value |
 
-When complete, D2 will be re-run on the full ~1 year window. The
-walk-forward + bootstrap gates will then have an OOS verdict surface.
+Per-month breakdown for D2_eth h24:
+
+| month | N | sum_net20 | mean_net20 |
+|---|---|---|---|
+| 2025-07 | 43 | -0.015 | -0.04 % |
+| 2025-08 | 13 | +0.246 | +1.89 % |
+| 2025-09 | 30 | **-1.237** | **-4.12 %** |
+| 2025-10 | 16 | +0.913 | +5.71 % |
+
+**The story.** With 3 months of data the headline +269 bps net20 looked
+exceptional. With 6 months it's -9 bps and the bootstrap CI straddles
+zero. The added 2025-09 (when the ETH backfill finally caught up to
+include the full month) carried -1.24 sum / -4.12 % mean — large
+enough to fully neutralise the 2025-10 contribution.
+
+D2_eth h4 net20 = -0.51 % over N=102 with bootstrap CI fully
+NEGATIVE — at the 4 h horizon, D2_eth loses money with 97.5 %
+confidence. That's the cleanest possible falsification.
+
+**The 2025-10 alpha was real but regime-bound, just like A1.** Both
+candidates light up in 2025-10 (uncrowded funding + extreme volume +
+OI surge + BTC up) and lose money in 2025-09 (which the gate also
+fires in but unfavourably). The lesson is identical to gate5: any
+candidate evaluated on a regime-imbalanced sample LOOKS promotable;
+proper distribution checks (best_month_share + walk_forward +
+bootstrap) catch it.
+
+### Verdict
+
+D2 (both candidates × all horizons) verdict: `no_value`. Same as the
+old D, but now with a different gate structure that proved
+the CVD-divergence framing didn't survive contact with a broader
+sample.
+
+The forward window backfill (2025-11-16 → 2026-06-01, 1584 tasks)
+caught Binance's IncompleteRead throttling twice. Not strictly needed
+— D2_eth h4 already falsifies the candidate at p = 0.025. Future
+work would re-run forward when the proxy / retry layer is hardened
+in `orderflow_history.download_aggtrades_day` to retry IncompleteRead
+(currently only catches URLError / OSError / HTTPError).
 
 ## Direction E — strict CIC-failure-confirmed (previously closed)
 
