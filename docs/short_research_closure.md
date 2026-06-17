@@ -108,6 +108,89 @@ Reference: `docs/v3_5_failure_risk_layer_bridge_findings.md`. These ship
 to the live counterfactual shadow stream — see the companion module
 `failure_overlay_shadow` for the running ledger.
 
+### 6. v7S Direction E — strict CIC-failure-confirmed short — REJECTED
+
+Even after adding `beta_high_gone` (btc_vol_regime proxy) +
+`sell_flow_confirms` (orderflow) on top of v4S Path A's chain, the CIC
+self-recovery property dominated. Fail-open ablation produced
+N=11 events at h24 with mean_net20 = -1.74 % (fast) / -2.92 % (swing);
+CIC longs recovered in 10/11 events. Reference: `docs/v7s_short_alpha_findings.md`,
+commit `97fb697`.
+
+### 7. v7S Direction D — relative-value pair short — REJECTED across 30 cells
+
+Five candidates × three horizons × two confirmation modes:
+
+- D0_naked_short — baseline.
+- D1_pair_btc / D2_pair_eth / D3_pair_dynamic_leader / D4_pair_basket — hedge variants.
+- ×3 horizons (h4 / h12 / h24) × 2 confirmation modes (with vs `_nc` ablation).
+
+All 30 cells `no_value`. The relative-value hypothesis is empirically
+refuted on this universe: beta and BTC/ETH are too correlated; every
+pair candidate has worse gross AND worse net20 than the naked baseline.
+D4 basket is catastrophic (-1.66 % net20) — 4 legs × 2 × 20 bp = 1.6 %
+cost dominates any signal. The reclaim_failure gate adds NO incremental
+edge (with vs without confirmation produces ≤ 5 bp net20 difference).
+
+Reference: `docs/v7s_short_alpha_findings.md`, commit `679dbda`.
+
+### 8. v7S Direction A — cross-exchange downside lead-lag — REGIME-EVENT ONLY
+
+The most interesting v7S finding, and the most subtle rejection. A1
+(Binance sell impulse → Bybit lag → short Bybit) initially produced
+A1_imb10bp h24 with N=56, gross +1.49 %, net20 +1.18 %, win 75 % — all
+ten gates passing under the FIRST cut of the evaluator. Tightening
+gate5 to enforce the closure-doc reopen §1 wording
+(`best_month_share ≤ 0.35` AND `month_capped_net > 0`) demoted it to
+`no_value` with a single gate5 failure: 2025-10 alone carried 63.7 %
+of the alpha.
+
+Validation harness (`scripts/v7s_a1_validation.py`) confirmed:
+
+- Walk-forward over disjoint thirds: bucket 0 (2025-07 → 10)
+  mean_net20 = **-1.19 %**; buckets 1 + 2 = +2.75 % / +2.01 %.
+  Alpha emerged in 2025-Q4 and persisted, but pre-Q4 the same gate
+  combination LOST money.
+- Bootstrap 95 % CI on N=56: `[-0.40 %, +2.52 %]` — straddles zero.
+  P(mean > 0) = 0.93.
+- Per-month: 4 positive / 5 negative; best month is 63.7 % of total.
+
+A1 is now a **regime-event research artefact**, not a candidate. Any
+further work on A1 must be branded "A1 Regime Autopsy", not
+"A1 Strategy Upgrade" (per the 77 docx P2 directive). Reference:
+`docs/v7s_short_alpha_findings.md`, commits `590c1f8` → `b4f8161`.
+
+---
+
+## Evaluation-side lessons (load-bearing — propagate to all future verdicts)
+
+The v7S work surfaced a methodology bug that the closure doc's first
+five reopen criteria did not catch. The fix must propagate to every
+report that emits a verdict:
+
+1. **gate5 must enforce `best_month_share ≤ month_cap_pct` in
+   addition to `month_capped_net > 0`.** The latter is too soft —
+   capping a 64 %-of-total month at 35 % still leaves a positive sum
+   while the underlying distribution is single-regime. A1_imb10bp's
+   first PROMOTE → tightened-gate5 NO_VALUE downgrade is the worked
+   example.
+2. **Walk-forward over disjoint time buckets must be a standard
+   verdict input.** Any candidate that loses money in any disjoint
+   third of the sample is non-stationary; the gate framework should
+   surface that even if mean-level gates pass.
+3. **Bootstrap 95 % CI on mean_net20 should be reported on every
+   candidate.** A CI that straddles zero is a `no_value` regardless of
+   the point estimate.
+4. **Random-baseline pass rate at p75 and p90, not just p50.** The
+   current `_matched_random_baseline` checks `candidate_mean >
+   random_mean` (p50). A stronger bar is `candidate_mean ≥
+   percentile(random_means, 90)`.
+
+These four checks should land in a shared `validation/gate_checks.py`
+module so every report (long, short, hybrid) emits the same
+`final_verdict` field. The 77 docx P0 directive calls this `vEval
+Global Gate5 / Concentration Validator`.
+
 ---
 
 ## Why this is closed
@@ -157,6 +240,48 @@ Failure to satisfy any of the five = no run. Do not "explore" first.
 
 ---
 
+## Standing short-side inventory (as of v7S close)
+
+A bookkeeping snapshot per the 77 docx task 1 — every short angle
+investigated, in one place, so future contributors do not re-litigate:
+
+### Rejected (do not iterate)
+
+| Angle | Where | Verdict | Why |
+|-------|-------|---------|-----|
+| Motif-led naked short (S1/S3/S5 → reclaim → breakdown) | v12s, v3.4 SS1A/B/SS2A/B, v4S Path B | reject | mean -0.31% to -0.48% across N=1028 |
+| CIC-failure short (Path A simple) | v3.4 SS3A/B, v4S Path A | reject | CIC longs recover; exit_existing_long < allow_long |
+| Crowded-stall short (Path C) | v4S Path C, v6S | reject (was demoted to risk_off_only) | 85% one-month; -5.71% in long worst month |
+| Relative-value beta short — naked + pair | v7S Direction D (all 30 cells) | reject | hedge HURTS naked alpha (beta/BTC correlated); D4 basket catastrophic |
+| A1 unfiltered short | v7S Direction A — A0 control | reject | -41 to -205 bps gross at all horizons |
+| Strict CIC-failure-confirmed short | v7S Direction E | reject | 10/11 CIC longs recover even after 4-gate cascade |
+
+### Diagnostic-only (kept as research signal, not tradable)
+
+| Angle | Where | Why kept |
+|-------|-------|----------|
+| A1 cross-exchange lead-lag (A1_imb10bp h24) | v7S Direction A | 75% win on N=56 but 63.7% from one month — regime-event, NOT promote |
+| F3 / F5 long-side risk overlay | v3.5 | shipping as failure_overlay_shadow (long-side action) |
+| Crowded-stall / funding-crowding combo | v4S Path C metadata | regime diagnostic — feeds A1 autopsy + future regime detector |
+| CVD / orderflow event windows | v11 cic_event_orderflow | input feature for Direction A; NOT a standalone signal |
+
+### Data-blocked (cannot evaluate yet)
+
+| Angle | Where | Block |
+|-------|-------|-------|
+| Strict E with breakdown-bar sell flow | v7S Direction E | cic_event_orderflow is CIC-entry-anchored, not breakdown-anchored |
+| Direction B liquidation continuation | not run | no liquidation tape on the box |
+| Direction C v2 (CVD divergence + taker exhaustion) | not run | CVD divergence labels not exported |
+| Hyperliquid lead-lag (A3 per docx) | not run | no Hyperliquid tape |
+
+### OOS-waiting (verdict pending fresh months)
+
+| Angle | Where | Note |
+|-------|-------|------|
+| A1_imb10bp h24 (post-2025-Q4 regime) | v7S Direction A | 2 of 3 walk-forward thirds positive; needs OOS replay on fresh months to determine if alpha persists or it was a Q4 regime event |
+
+---
+
 ## Provenance
 
 - v3.4 sleeves + verdicts: `docs/v3_4_true_short_sleeve_findings.md`,
@@ -167,6 +292,8 @@ Failure to satisfy any of the five = no run. Do not "explore" first.
   commit `f8e1cbb`.
 - v6S Path C discipline: `docs/v6s_path_c_short_validation_findings.md`,
   commit `f33c50f`.
+- v7S full lane (Directions A/D/E + validation): `docs/v7s_short_alpha_findings.md`,
+  commits `dbd9671` through `b4f8161`.
 - A100 production environment: see [[a100-ssh-access]] memory note.
 - Live F3/F5 shadow recorder: `src/pressure_graph/reports/failure_overlay_shadow.py`
   and the companion ledger in `reports/failure_overlay_shadow/`.
