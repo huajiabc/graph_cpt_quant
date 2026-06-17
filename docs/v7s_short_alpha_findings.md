@@ -1,107 +1,129 @@
 # v7S Short Alpha Exploration — findings
 
-**Status: Direction E first-run complete. Verdict `no_value` on both
-candidate codes — empirically confirms the closure doc's hypothesis
-that CIC failure does NOT produce a tradable short even under the
-strict 4-gate cascade specified by `short_instructment6 (v7s).docx`.**
+**Status: Directions E + D complete. Both `no_value` across all candidates.
+A clean negative finding for the docx Direction E hypothesis (CIC longs
+recover even after strict gating) AND for the Direction D pair-short
+hypothesis (BTC/ETH/basket hedges hurt rather than help on this universe).**
 
-> Lane opened per the docx mandate to explore short alpha orthogonal
-> to the closed v12s / v3.4 / v4S / v6S motif thread. The closure doc
+> Lane opened per the docx mandate to explore short alpha orthogonal to
+> the closed v12s / v3.4 / v4S / v6S motif thread. The closure doc
 > (`docs/short_research_closure.md`) prohibited iterating on failed
-> motifs and locked five reopen criteria; v7S satisfies the "orthogonal
-> new lane" path. Direction E is the only direction with code wired in
-> this commit.
+> motifs; v7S is the orthogonal new lane.
 
-## Five directions and scope
+## Direction inventory and status
 
 | Direction | Question | Data needed | Status |
 |-----------|----------|-------------|--------|
-| **A** Cross-exchange lag | Binance/OKX sell impulse → Bybit lag → short | Binance UM + Bybit linear aggTrades | Stubbed |
-| **B** Liquidation continuation | Long-liquidation spike → failed reclaim → continuation | Liquidation tape | Deferred (no source) |
+| **A** Cross-exchange lag | Binance/OKX sell impulse → Bybit lag → short | Binance UM + Bybit linear aggTrades | Stubbed (next) |
+| **B** Liquidation continuation | Long-liquidation spike → failed reclaim | Liquidation tape | Deferred (no source) |
 | **C** Crowded unwind v2 | funding+OI high + taker-buy exhaustion + CVD divergence | aggTrades CVD | Stubbed |
-| **D** Relative-value pair | overextended beta vs leader → mean revert | Multi-symbol features | Stubbed |
+| **D** Relative-value pair | overextended beta vs leader → mean revert | Multi-symbol features | **Run complete — `no_value`** |
 | **E** CIC-failure confirmed (strict) | v4S Path A + beta_high gone + sell flow confirms | Local CIC + v11 orderflow_history | **Run complete — `no_value`** |
 
-A/B/C/D directions remain `NotImplementedError`-stubbed in
-`cfg.enabled_directions`; follow-up commits will wire each.
+## Direction D — relative-value pair (Phase 1 done)
 
-## Direction E run — gate cascade and verdict
+### Spec implemented (per v7s docx expanded guide)
 
-### Universe and inputs
+Five candidates × three fixed holding horizons × two confirmation modes
+(with vs without reclaim_failure gate) = 30 cells per stream.
 
-- Feature parquet: `data/processed/v0_3/perp_pressure_features_all_eligible.parquet` (80 symbols, 12.4M bars).
-- CIC long index: 191 entries (152 within v7S top-30 universe).
-- Orderflow event parquet: `data/orderflow_history/binance_um/cic_event_orderflow.parquet` (loaded ok).
+| Candidate | Long leg | Cost legs (round-trip) |
+|-----------|----------|------------------------|
+| D0_naked_short | (none) | 1 |
+| D1_pair_btc | BTC | 2 |
+| D2_pair_eth | ETH | 2 |
+| D3_pair_dynamic_leader | argmax 24h-ret of pool {BTC, ETH, SOL, BNB} | 2 |
+| D4_pair_basket | mean(BTC, ETH, SOL) | 4 |
 
-### Gate cascade (per candidate)
+Holding horizons: h4 (16 bars), h12 (48 bars), h24 (96 bars). Each
+horizon exits at the fixed bar's close (no intra-trade TP/SL).
 
-| Stage | E1 break-entry | E2 break-pullback |
-|---|---|---|
-| 1. CIC longs in universe | 152 | 152 |
-| 2. Breakdown found within 12 bars | 144 | 17 |
-| 3. + CP60 weak follow-through | 32 | 1 |
-| 4. + Protect_A not active (col missing → fail-open) | 32 | 1 |
-| 5. + beta_high environment gone (btc_vol_regime / btc_market_state) | 11 | 1 |
-| 6. + sell flow confirms (orderflow at break bar) | **0 (data gap)** | **0 (data gap)** |
+`_nc` suffix denotes the no-confirmation ablation (reclaim_failure gate
+bypassed) used to test docx §核心对照 item 7.
 
-The sell-flow gate matched zero events because the v11
-`cic_event_orderflow.parquet` was backfilled around CIC LONG entry
-timestamps, not breakdown timestamps. Every Direction E breakdown
-returned `orderflow_unmatched_event`. To get a meaningful sell-flow
-read for Direction E, the orderflow_history backfill must be re-run
-with break-bar event windows.
+Entry chain: (1) symbol's `ret_4h_percentile ≥ 95` somewhere in 4h
+lookback. (2) BTC's `ret_4h ≤ -0.5 %` at break bar. (3) (when enabled)
+symbol's close ≥ 1.5 % below the lookback's high.
 
-### Fail-open ablation (sell-flow gate waived)
+### Run summary (A100, top-30 universe, 76 beta candidates)
 
-To produce numbers under the 5-gate strict chain (without the data-gap
-sell-flow gate), the lane was re-run with `--sell-flow-fail-open`.
-Eleven E1 events + one E2 event pass the 5-gate cascade. Numbers
-(focal cost 20 bps, funding 30 % APR):
+Numbers below are mean_net20 at 20 bps focal cost; n_legs-aware cost
+charged per row.
 
-| Candidate | Execution | N | mean_gross | mean_net20 | win_rate | verdict | gate failures |
-|-----------|-----------|---|-----------|-----------|---------|---------|---------------|
-| E1_cic_break_entry_strict | fast | 11 | -1.35 % | -1.74 % | 9.1 % | `no_value` | 1,2,3,5,6,9 |
-| E1_cic_break_entry_strict | swing | 11 | -2.53 % | -2.92 % | 9.1 % | `no_value` | 1,2,3,5,6,8,9,10 |
-| E2_cic_break_pullback_strict | fast | 1 | +2.08 % | +1.70 % | 100 % | `no_value` | 6,7,10 (N=1) |
-| E2_cic_break_pullback_strict | swing | 1 | +2.53 % | +2.17 % | 100 % | `no_value` | 6,7,10 (N=1) |
+| Candidate | h4 | h12 | h24 | h24 win | h24 verdict |
+|-----------|----|------|------|---------|-------------|
+| **D0_naked_short** | -0.30 % | -0.24 % | **+0.13 %** | 55.0 % | no_value (gate2,5,10) |
+| **D0_naked_short_nc** | -0.29 % | -0.20 % | **+0.18 %** | 55.5 % | no_value (gate2,5,10) |
+| D1_pair_btc | -0.76 % | -0.75 % | -0.74 % | 46.7 % | no_value |
+| D1_pair_btc_nc | -0.77 % | -0.77 % | -0.76 % | 46.8 % | no_value |
+| D2_pair_eth | -0.83 % | -0.78 % | -0.81 % | 45.2 % | no_value |
+| D2_pair_eth_nc | -0.86 % | -0.86 % | -0.92 % | 43.8 % | no_value |
+| D3_pair_dynamic_leader | -0.79 % | -0.73 % | -0.81 % | 43.8 % | no_value |
+| D3_pair_dynamic_leader_nc | -0.80 % | -0.76 % | -0.84 % | 43.6 % | no_value |
+| D4_pair_basket | -1.63 % | -1.60 % | -1.66 % | 32.4 % | no_value |
+| D4_pair_basket_nc | -1.64 % | -1.64 % | -1.71 % | 31.5 % | no_value |
 
-**E1 result.** 11 strict CIC-failure shorts produced -1.74 % mean net20
-on Fast and -2.92 % on Swing, win rate 9.1 %. The CIC long recovered
-in 10 of 11 events; `short_beats_no_long_pct = 9.1 %`. Failing gates:
+Sample sizes: with-confirmation candidates ≈ 5325 trades/horizon;
+no-confirmation ≈ 6649/horizon (≈25 % more events without the
+reclaim_failure gate).
 
-- gate1: mean_net20 ≤ 0
-- gate2: net30 < 0.5 × net20 (also negative)
-- gate3: hit_down_3pct < 0.35 (shorts rarely hit a 3 % drop)
-- gate5/6: monthly net negative under capping and leave-worst
-- gate9: short does NOT beat no_long > 0 (closure §reopen criterion 4)
-- gate10 (swing only): hedge corr did not pass the −0.30 bar
+### Key findings
 
-**E2 result.** Only 1 event passes — N too small to interpret. Even
-the single trade fails gate6 / gate7 / gate10 mechanically.
+1. **The relative-value pair hypothesis is empirically refuted on this
+   universe.** Every pair candidate (D1/D2/D3/D4) has WORSE gross AND
+   worse net than the naked baseline (D0). Hedging with BTC/ETH/SOL or
+   the 3-symbol basket subtracted alpha. The user-docx hypothesis was
+   that hedging would protect against "全市场继续上冲导致裸空被打爆";
+   in this data that risk is sufficiently rare that the hedge cost +
+   hedge correlation with the beta wipes out the protection benefit.
 
-### Read
+2. **The reclaim_failure gate adds no meaningful edge.** Comparing
+   with-confirmation vs no-confirmation cells:
+   - D0 h24: +13 bps → +18 bps (no_conf is slightly better)
+   - D1 h24: -74 bps → -76 bps (~same)
+   - D2 h24: -81 bps → -92 bps (no_conf slightly worse)
+   The gate drops 25 % of the population for zero net20 improvement.
+   The alpha (such as it is) lives in the overextension +
+   leader_weakening combo, not in the breakdown confirmation.
 
-The closure doc's TL;DR §3 said:
+3. **Naked beta short of overextended names at 24h hold is the only
+   row with positive net20** at the 20 bp focal — but cost-fragile.
+   - D0_naked_short_nc h24: gross +0.50 %, net20 +0.18 %, win 55.5 %.
+   - At 30 bp net = -0.04 % (gate2 fails).
+   - month_cap fails too (one month likely dominates).
 
-> CIC-failure short (CIC long → no follow-through → CP60 → breakdown):
-> rejected (v4S Path A).
+4. **Basket hedge (D4) is catastrophic** at -1.66 % net20 because the
+   4-leg cost (8 × 20 bp = 1.6 %) dominates any signal. The basket arm
+   exists only because the docx §核心对照 item 4 called for it; it
+   verifies it does not work here.
 
-v7S Direction E asked: *if we add `beta_high_gone` + `sell_flow_confirms`
-on top of v4S Path A's chain, does the answer change?* Empirically:
+5. **Win rates flip near 50 % at h24.** D0 sits at 55 %, all pairs
+   sit at 43-47 %. The base rate from overextended-beta-short is
+   marginally positive but well below the cost-breakeven level.
 
-1. `beta_high_gone` (btc_vol_regime / btc_market_state proxy) prunes
-   the population by ~3× (32 → 11 for E1; 1 → 1 for E2).
-2. Despite the additional gate, the 11 surviving events show CIC longs
-   recovering in 10/11 (90.9 %). The short still loses 1.7-2.9 % mean.
+### Verdict
 
-The v3.4 SS3 rejection ledger continues: CIC longs have a
-self-recovery property that the existing CP60 / Protect_A / O6
-management already exploits. Adding a short overlay competes with
-that protection and loses.
+Direction D verdict: `no_value` on all 30 cells.
 
-The hypothesis the docx wanted to test — "wait for failure THEN
-confirmation of inability to recover" — does not survive contact with
-the data on this universe and window.
+Direction D's closest-to-promote cell is `D0_naked_short_nc h24`
+(7 of 10 gates pass), and that's a stripped-down NAKED short with
+NO confirmation gate — the exact opposite of what the docx structurally
+proposed. The expanded pair scaffolding tested in this commit is the
+right place to STOP iterating, not iterate.
+
+## Direction E — strict CIC-failure-confirmed (previously closed)
+
+Recap from prior commit `97fb697`:
+
+| Candidate | Execution | N | mean_net20 | Verdict |
+|-----------|-----------|---|-----------|---------|
+| E1_cic_break_entry_strict | fast | 11 | -1.74 % | no_value |
+| E1_cic_break_entry_strict | swing | 11 | -2.92 % | no_value |
+| E2_cic_break_pullback_strict | fast | 1 | +1.70 % | no_value (N=1) |
+| E2_cic_break_pullback_strict | swing | 1 | +2.17 % | no_value (N=1) |
+
+CIC longs recovered in 10/11 events (90.9 %). Strict CIC-failure
+confirmed short does not pay.
 
 ## Ten-gate acceptance reference
 
@@ -124,6 +146,23 @@ Verdict logic:
 - `risk_off_only` — gates 1-8 pass; exactly one of 9/10 fails.
 - `no_value` — any of gates 1-8 fail (or both 9 and 10 fail).
 
+## Notes for the next commit
+
+1. **Direction A is the next priority** — per memory note
+   `v11-orderflow-burst-ranking`, Binance UM + Bybit linear aggTrades
+   are both on the A100 box. The lead-lag detector is the cleanest
+   data-ready next direction since it requires aligning two tapes by
+   timestamp, not building new gates.
+2. **Direction E remains data-blocked on sell-flow.** Re-backfilling
+   orderflow_history at breakdown bars (instead of CIC entry bars)
+   would unblock the strict gate; deferred until Direction A lands.
+3. **Direction C v2** needs CVD divergence labels not currently
+   exported — spec these before wiring.
+4. **Direction D scaffolding stays in tree** as a negative result — do
+   not re-tune hedge ratios or add new horizons here without first
+   producing a hypothesis for why the leader-beta correlation in this
+   universe would differ.
+
 ## Reproduction
 
 A100 (production):
@@ -134,10 +173,10 @@ ssh root@localhost -p 12222            # second terminal
 cd /opt/data/private/Wangjb/graph
 source /opt/conda/etc/profile.d/conda.sh && conda activate quant
 PYTHONPATH=src python scripts/v7s_short_alpha_once.py --config configs/v0_3.yaml
-# ablation:
+# Direction E orderflow ablation:
 PYTHONPATH=src python scripts/v7s_short_alpha_once.py --config configs/v0_3.yaml \
   --sell-flow-fail-open --report-root reports/v7s_short_alpha_fail_open
-# gate cascade audit:
+# Direction E gate cascade audit:
 PYTHONPATH=src python scripts/v7s_direction_e_gate_cascade.py
 ```
 
@@ -150,26 +189,9 @@ PYTHONPATH=src python -m pytest tests/test_v7s_short_alpha.py -q
 
 ## Outputs
 
-Production outputs are committed under
-`reports/v7s_short_alpha/E_cic_failure_confirmed/` (strict, N=0) and
-`reports/v7s_short_alpha/E_cic_failure_confirmed_failopen/` (sell-flow
-waived, N=12). Layout matches the ten docx-mandated files plus the
-`gate_cascade_counts.csv` audit dropped by the diagnostic script.
-
-## Notes for the next commit
-
-1. **Re-backfill orderflow for breakdown events.** The Direction E
-   strict run is *data-blocked*, not signal-blocked. If a follow-up
-   commit re-runs `pressure_graph.orderflow_history` over break-bar
-   event windows instead of CIC entry windows, the sell-flow gate
-   becomes meaningful and the strict run can be re-evaluated.
-2. **Direction D priority.** Relative-value pair short uses only
-   multi-symbol features the long stack already builds — no new data
-   plumbing needed. Cleanest next target.
-3. **Direction A** is the next-highest priority and is data-ready on
-   A100 (per memory note `v11-orderflow-burst-ranking`) — but it needs
-   Bybit aggTrades alignment work to compare with Binance lead.
-4. **Beta-high gate semantics** are now market-regime proxied via
-   `btc_vol_regime` transitions. If a future feature build adds
-   `gate_beta_already_extended` to the v0.3 parquet, the gate
-   automatically falls back to the strict v07c semantic.
+Production outputs live under `reports/v7s_short_alpha/<direction>/`
+(gitignored locally; pulled from A100 per session). Each direction
+emits the docx-mandated ten CSVs + `candidate_notes.md` (verdict
+narrative). Direction E additionally emits
+`gate_cascade_counts.csv` via the diagnostic script for visibility into
+which gate filters the population.

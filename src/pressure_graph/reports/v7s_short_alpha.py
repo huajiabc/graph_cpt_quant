@@ -120,6 +120,24 @@ CANDIDATE_E2 = "E2_cic_break_pullback_strict"   # ref = pullback low
 
 E_CANDIDATES: tuple[str, ...] = (CANDIDATE_E1, CANDIDATE_E2)
 
+# Direction D candidate codes — relative-value pair (short overextended beta /
+# long hedge). Per the v7s expanded spec, four candidates differ by HEDGE TYPE,
+# plus one naked-short baseline column so the discipline checks can prove
+# pair > naked at the row level.
+CANDIDATE_D0 = "D0_naked_short"        # naked: -symbol_short (no hedge)
+CANDIDATE_D1 = "D1_pair_btc"           # short beta / long BTC
+CANDIDATE_D2 = "D2_pair_eth"           # short beta / long ETH
+CANDIDATE_D3 = "D3_pair_dynamic_leader"  # short beta / long argmax-ret leader from pool
+CANDIDATE_D4 = "D4_pair_basket"        # short beta / long average of leader basket
+
+D_CANDIDATES: tuple[str, ...] = (
+    CANDIDATE_D0,
+    CANDIDATE_D1,
+    CANDIDATE_D2,
+    CANDIDATE_D3,
+    CANDIDATE_D4,
+)
+
 
 @dataclass(frozen=True)
 class V7SConfig:
@@ -131,9 +149,9 @@ class V7SConfig:
     long_pool_name: str = "P2_CIC1_CIC2_COMBINED"
     top_n: int = 30
 
-    # Which directions to execute this run. Direction E is the default; the
-    # others are flagged off until their data plumbing lands.
-    enabled_directions: tuple[str, ...] = (DIRECTION_E,)
+    # Which directions to execute this run. E + D are wired; A/B/C remain
+    # NotImplementedError-stubbed.
+    enabled_directions: tuple[str, ...] = (DIRECTION_E, DIRECTION_D)
 
     # Direction E sleeve specs — kept inline so the strict gates are visible
     # at config-read time (`grep -n E_SLEEVES` finds the active surface).
@@ -176,6 +194,29 @@ class V7SConfig:
     # audit reason (downstream candidate_notes.md still flags the run as
     # "orderflow_missing").
     e_sell_flow_fail_open: bool = False
+
+    # Direction D — relative-value pair (short overextended beta / long hedge).
+    # Gate parameters (shared across all D candidates).
+    d_lookback_bars: int = 16  # 4h scan window for overperformance + reclaim
+    d_overextended_pct: float = 95.0  # ret_4h_percentile bar for "extreme overperformance"
+    d_leader_weak_ret_4h: float = -0.005  # BTC ret_4h ≤ -0.5 % counts as leader weakening
+    d_reclaim_tolerance: float = 0.015  # close must be ≥1.5 % below the lookback's high
+    d_cooldown_bars: int = 24
+    d_exclude_leader: bool = True  # do not run Direction D on a leader-pool symbol itself
+
+    # Fixed pair holding horizons in bars (4h, 12h, 24h with 15-min bars).
+    d_holding_horizons_bars: tuple[int, ...] = (16, 48, 96)
+
+    # Hedge symbol pool.
+    d_leader_pool: tuple[str, ...] = ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT")
+    d_basket_symbols: tuple[str, ...] = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
+    d_dynamic_leader_lookback_bars: int = 96  # 24h "leader showing strength" window
+
+    # No-confirmation ablation: when True, run a SECOND pass without the
+    # reclaim_failure gate. Candidates from that pass get suffix ``_nc`` so
+    # the discipline view can compare with vs without failure confirmation
+    # (docx §核心对照 item 7).
+    d_include_no_confirmation: bool = True
 
     # Matched-random baseline knobs (docx gate 8).
     random_baseline_draws: int = 100
@@ -484,6 +525,338 @@ def _collect_direction_e_signals(
 
 
 # --------------------------------------------------------------------------------------
+# Direction D — relative-value pair (short overextended beta / long leader BTC)
+# --------------------------------------------------------------------------------------
+
+
+def _gate_beta_overextended(
+    group: pd.DataFrame, idx: int, threshold: float, cfg: V7SConfig
+) -> bool:
+    """Symbol's ``ret_4h_percentile`` reached ≥ ``threshold`` somewhere in
+    the lookback ``[idx - d_lookback_bars, idx]``. Missing column fails closed."""
+    if "ret_4h_percentile" not in group.columns:
+        return False
+    pct = _f(group, "ret_4h_percentile")
+    if idx >= len(pct):
+        return False
+    start = max(0, idx - cfg.d_lookback_bars)
+    window = pct[start : idx + 1]
+    if window.size == 0:
+        return False
+    return bool(np.nanmax(window) >= threshold)
+
+
+def _gate_leader_weakening(group: pd.DataFrame, idx: int, cfg: V7SConfig) -> bool:
+    """BTC's ret_4h at this bar is ≤ ``d_leader_weak_ret_4h``."""
+    if "btc_ret_4h" not in group.columns:
+        return False
+    btc = _f(group, "btc_ret_4h")
+    if idx >= len(btc):
+        return False
+    return bool(np.isfinite(btc[idx]) and btc[idx] <= cfg.d_leader_weak_ret_4h)
+
+
+def _gate_beta_reclaim_failure(group: pd.DataFrame, idx: int, cfg: V7SConfig) -> bool:
+    """Symbol's close at idx is ≥ ``d_reclaim_tolerance`` below the high in
+    the lookback ``[idx - d_lookback_bars, idx]``."""
+    close = _f(group, "close")
+    high = _f(group, "high")
+    if idx >= len(close) or idx >= len(high):
+        return False
+    start = max(0, idx - cfg.d_lookback_bars)
+    window_high = high[start : idx + 1]
+    if window_high.size == 0:
+        return False
+    lookback_high = float(np.nanmax(window_high))
+    cur_close = float(close[idx])
+    if not (np.isfinite(lookback_high) and np.isfinite(cur_close)) or lookback_high <= 0:
+        return False
+    drop_pct = (lookback_high - cur_close) / lookback_high
+    return bool(drop_pct >= cfg.d_reclaim_tolerance)
+
+
+def _emit_direction_d_signals(
+    group: pd.DataFrame,
+    cfg: V7SConfig,
+    require_reclaim_failure: bool = True,
+) -> list[dict[str, object]]:
+    """Direction D entry stream — one row per bar that passes the 3-gate combo
+    + cooldown. When ``require_reclaim_failure`` is False, the third gate is
+    bypassed (this powers the no-confirmation ablation: how much of the alpha
+    survives without the "failed reclaim" filter). Candidate (hedge type)
+    expansion happens at execution time so we don't re-walk the bar tape per
+    candidate."""
+    rows: list[dict[str, object]] = []
+    if "feature_time" not in group.columns or "bar_open_time" not in group.columns:
+        return rows
+    symbol = str(group["symbol"].iloc[0]) if len(group) else ""
+    if not symbol:
+        return rows
+    if cfg.d_exclude_leader and symbol in set(cfg.d_leader_pool):
+        return rows
+    feature_time = pd.to_datetime(group["feature_time"], utc=True, errors="coerce")
+    bar_open_time = pd.to_datetime(group["bar_open_time"], utc=True, errors="coerce")
+    close = _f(group, "close")
+    n = len(group)
+    last_fire = -1_000_000
+    gate_audit = "ok" if require_reclaim_failure else "no_reclaim_gate"
+    for idx in range(cfg.d_lookback_bars, n - 1):
+        if idx - last_fire < cfg.d_cooldown_bars:
+            continue
+        if not _gate_beta_overextended(group, idx, cfg.d_overextended_pct, cfg):
+            continue
+        if not _gate_leader_weakening(group, idx, cfg):
+            continue
+        if require_reclaim_failure and not _gate_beta_reclaim_failure(group, idx, cfg):
+            continue
+        entry_idx = idx + 1
+        if entry_idx >= n:
+            continue
+        rows.append(
+            {
+                "direction": DIRECTION_D,
+                "sleeve_code": "D_overextended_beta",
+                "sleeve_name": "D_overextended_beta",
+                "exchange": str(group.iloc[idx].get("exchange", "")),
+                "symbol": symbol,
+                "motif_code": "",
+                "anchor_idx": int(idx),
+                "confirmation_idx": int(idx),
+                "break_idx": int(idx),
+                "entry_idx": int(entry_idx),
+                "anchor_feature_time": feature_time.iloc[idx],
+                "signal_time": feature_time.iloc[idx],
+                "entry_time": bar_open_time.iloc[entry_idx],
+                "reference_low": float(close[idx]) if idx < len(close) else float("nan"),
+                "month": (
+                    feature_time.iloc[idx].strftime("%Y-%m")
+                    if pd.notna(feature_time.iloc[idx])
+                    else ""
+                ),
+                "btc_state": str(group.iloc[idx].get("btc_market_state", "")),
+                "audit_reason": gate_audit,
+                "confirmation_required": bool(require_reclaim_failure),
+            }
+        )
+        last_fire = idx
+    return rows
+
+
+def _build_hedge_lookups(
+    feature_path: Path,
+    rank30: pd.DataFrame,
+    rank90: pd.DataFrame,
+    config: ExperimentConfig,
+    cfg: V7SConfig,
+) -> dict[str, tuple[pd.DataFrame, dict[int, int]]]:
+    """Pre-load each hedge symbol's group + ``bar_open_time_ns -> idx`` map.
+
+    Hedge pool = union of leader_pool and basket_symbols. Missing symbols are
+    simply omitted from the dict; candidates that depend on them later return
+    NaN for the leg (and the row is dropped).
+    """
+    out: dict[str, tuple[pd.DataFrame, dict[int, int]]] = {}
+    needed = set(cfg.d_leader_pool) | set(cfg.d_basket_symbols)
+    for sym in sorted(needed):
+        g = _read_symbol_features(feature_path, rank30, rank90, sym, config)
+        if g.empty:
+            continue
+        g = g.sort_values("bar_open_time").reset_index(drop=True)
+        ns_array = pd.to_datetime(g["bar_open_time"], utc=True, errors="coerce").astype("int64").to_numpy()
+        ns_to_idx = {int(ns): i for i, ns in enumerate(ns_array) if ns > 0}
+        out[sym] = (g, ns_to_idx)
+    return out
+
+
+def _leg_return_at_horizon(
+    hedge_lookup: tuple[pd.DataFrame, dict[int, int]] | None,
+    entry_time: pd.Timestamp,
+    holding_bars: int,
+) -> float:
+    """Long-leg gross return from entry_time over holding_bars (15-min bars)."""
+    if hedge_lookup is None:
+        return float("nan")
+    hedge_group, ns_to_idx = hedge_lookup
+    idx = ns_to_idx.get(int(pd.Timestamp(entry_time).value), -1)
+    if idx < 0:
+        return float("nan")
+    open_arr = _f(hedge_group, "open")
+    close_arr = _f(hedge_group, "close")
+    if idx >= len(open_arr) or idx + holding_bars >= len(close_arr):
+        return float("nan")
+    entry_price = float(open_arr[idx])
+    exit_price = float(close_arr[idx + holding_bars])
+    if not (np.isfinite(entry_price) and np.isfinite(exit_price)) or entry_price <= 0:
+        return float("nan")
+    return (exit_price - entry_price) / entry_price
+
+
+def _pick_dynamic_leader(
+    entry_time: pd.Timestamp,
+    hedge_lookups: dict[str, tuple[pd.DataFrame, dict[int, int]]],
+    cfg: V7SConfig,
+) -> str | None:
+    """Pick the leader-pool symbol whose ``d_dynamic_leader_lookback_bars``
+    cumulative return at ``entry_time`` is highest. Falls back to the first
+    pool symbol with available data."""
+    best_sym: str | None = None
+    best_ret = -float("inf")
+    lookback = cfg.d_dynamic_leader_lookback_bars
+    for sym in cfg.d_leader_pool:
+        if sym not in hedge_lookups:
+            continue
+        g, ns_to_idx = hedge_lookups[sym]
+        idx = ns_to_idx.get(int(pd.Timestamp(entry_time).value), -1)
+        if idx < 0 or idx < lookback:
+            continue
+        close = _f(g, "close")
+        if idx >= len(close):
+            continue
+        past = float(close[idx - lookback])
+        now = float(close[idx])
+        if not (np.isfinite(past) and np.isfinite(now)) or past <= 0:
+            continue
+        ret = (now - past) / past
+        if ret > best_ret:
+            best_ret = ret
+            best_sym = sym
+    return best_sym
+
+
+def _execute_direction_d(
+    group: pd.DataFrame,
+    signal: dict,
+    hedge_lookups: dict[str, tuple[pd.DataFrame, dict[int, int]]],
+    cfg: V7SConfig,
+) -> list[dict[str, object]]:
+    """Expand one D signal into 5 candidates × len(d_holding_horizons_bars) rows.
+
+    For each (candidate, horizon):
+    - Compute the symbol's naked short return over the horizon.
+    - For pair candidates, compute the hedge long return over the same horizon.
+    - Pair gross = -symbol_short + hedge_long (i.e. symbol_short_return as defined
+      already is positive when the short wins; we add it directly).
+
+    Rows are tagged ``execution = "h4"/"h12"/"h24"`` (the holding window in hours).
+    Naked short candidate D0 carries hedge_long = 0 and serves as the row-level
+    baseline for the discipline checks.
+    """
+    entry_idx = int(signal.get("entry_idx", -1))
+    open_arr = _f(group, "open")
+    close_arr = _f(group, "close")
+    if entry_idx < 0 or entry_idx >= len(open_arr):
+        return []
+    symbol_entry_price = float(open_arr[entry_idx])
+    if not np.isfinite(symbol_entry_price) or symbol_entry_price <= 0:
+        return []
+    entry_time = pd.Timestamp(signal.get("entry_time"))
+    if pd.isna(entry_time):
+        return []
+
+    dynamic_leader_sym = _pick_dynamic_leader(entry_time, hedge_lookups, cfg)
+
+    rows: list[dict[str, object]] = []
+    for horizon in cfg.d_holding_horizons_bars:
+        exit_idx = entry_idx + horizon
+        if exit_idx >= len(close_arr):
+            continue
+        symbol_exit = float(close_arr[exit_idx])
+        if not np.isfinite(symbol_exit):
+            continue
+        symbol_short_ret = (symbol_entry_price - symbol_exit) / symbol_entry_price
+        horizon_label = f"h{horizon * 15 // 60}"
+
+        for cand_code in D_CANDIDATES:
+            if cand_code == CANDIDATE_D0:
+                hedge_syms: tuple[str, ...] = ()
+            elif cand_code == CANDIDATE_D1:
+                hedge_syms = ("BTCUSDT",)
+            elif cand_code == CANDIDATE_D2:
+                hedge_syms = ("ETHUSDT",)
+            elif cand_code == CANDIDATE_D3:
+                hedge_syms = (dynamic_leader_sym,) if dynamic_leader_sym else ()
+            elif cand_code == CANDIDATE_D4:
+                hedge_syms = cfg.d_basket_symbols
+            else:
+                continue
+
+            hedge_returns: list[float] = []
+            for hsym in hedge_syms:
+                ret = _leg_return_at_horizon(hedge_lookups.get(hsym), entry_time, horizon)
+                if np.isfinite(ret):
+                    hedge_returns.append(ret)
+
+            if hedge_syms and not hedge_returns:
+                continue  # hedge unavailable — drop this candidate row
+            hedge_long_ret = float(np.mean(hedge_returns)) if hedge_returns else 0.0
+            pair_gross = symbol_short_ret + hedge_long_ret
+
+            row = dict(signal)
+            row.update(
+                {
+                    "candidate_code": cand_code,
+                    "execution": horizon_label,
+                    "holding_bars": int(horizon),
+                    "gross_return": float(pair_gross),
+                    "pair_gross_return": float(pair_gross),
+                    "symbol_short_gross": float(symbol_short_ret),
+                    "hedge_long_gross": float(hedge_long_ret),
+                    "hedge_symbols": "|".join(hedge_syms) if hedge_syms else "naked",
+                    "exit_reason": "horizon",
+                    "execution_horizon_bars": int(horizon),
+                }
+            )
+            rows.append(row)
+    return rows
+
+
+def _collect_direction_d_signals(
+    feature_path: Path,
+    rank30: pd.DataFrame,
+    rank90: pd.DataFrame,
+    config: ExperimentConfig,
+    cfg: V7SConfig,
+) -> pd.DataFrame:
+    """Stream Direction D events × 5 candidates × 3 horizons across the universe."""
+    symbols = sorted(
+        rank30[pd.to_numeric(rank30["dynamic_all_rank"], errors="coerce") <= cfg.top_n]["symbol"]
+        .dropna()
+        .astype(str)
+        .unique()
+    )
+    hedge_lookups = _build_hedge_lookups(feature_path, rank30, rank90, config, cfg)
+    if not hedge_lookups:
+        print("v7S Direction D: no hedge symbols available — skipping.", flush=True)
+        return pd.DataFrame()
+    print(
+        f"v7S Direction D: hedge symbols loaded = {sorted(hedge_lookups.keys())}",
+        flush=True,
+    )
+
+    rows: list[dict[str, object]] = []
+    leader_set = set(cfg.d_leader_pool)
+    for i, symbol in enumerate(symbols, start=1):
+        if cfg.d_exclude_leader and symbol in leader_set:
+            continue
+        group = _read_symbol_features(feature_path, rank30, rank90, symbol, config)
+        if group.empty:
+            continue
+        group = group.sort_values("bar_open_time").reset_index(drop=True)
+        signals = _emit_direction_d_signals(group, cfg, require_reclaim_failure=True)
+        for sig in signals:
+            rows.extend(_execute_direction_d(group, sig, hedge_lookups, cfg))
+        if cfg.d_include_no_confirmation:
+            nc_signals = _emit_direction_d_signals(group, cfg, require_reclaim_failure=False)
+            for sig in nc_signals:
+                for r in _execute_direction_d(group, sig, hedge_lookups, cfg):
+                    r["candidate_code"] = f"{r['candidate_code']}_nc"
+                    rows.append(r)
+        if i % 25 == 0:
+            print(f"v7S Direction D: {i}/{len(symbols)} symbols, {len(rows)} executions", flush=True)
+    return pd.DataFrame(rows)
+
+
+# --------------------------------------------------------------------------------------
 # Cost / funding model — per-trade net
 # --------------------------------------------------------------------------------------
 
@@ -495,7 +868,7 @@ def _net_short_return(
     extra_slippage_bps: float,
     cfg: V7SConfig,
 ) -> float:
-    """Post-cost, post-funding net for a 1.0× short."""
+    """Post-cost, post-funding net for a 1.0× short (single leg)."""
     if not np.isfinite(gross):
         return float("nan")
     round_trip_bps = 2.0 * (float(cost_bps) + float(extra_slippage_bps)) / 10_000.0
@@ -504,17 +877,81 @@ def _net_short_return(
     return float(gross) - round_trip_bps + funding_accrual
 
 
+def _net_pair_return(
+    gross: float,
+    holding_bars: int,
+    cost_bps: float,
+    extra_slippage_bps: float,
+    cfg: V7SConfig,
+    n_legs: int = 2,
+) -> float:
+    """Post-cost net for a relative-value position with ``n_legs`` legs.
+
+    Pair PnL already nets ``-symbol_short`` against ``+leader_long`` so the
+    only adjustment is round-trip cost per leg. Funding is assumed symmetric
+    between legs in a pair — net ≈ 0; for ``n_legs=1`` (naked baseline) the
+    short receives funding at the configured APR via the holding window.
+    """
+    if not np.isfinite(gross):
+        return float("nan")
+    round_trip_bps = 2.0 * n_legs * (float(cost_bps) + float(extra_slippage_bps)) / 10_000.0
+    if n_legs == 1:
+        holding_hours = max(float(holding_bars), 0.0) / max(cfg.bars_per_hour, 1e-6)
+        funding_accrual = cfg.funding_apr_assumption * (holding_hours / (24.0 * 365.0))
+        return float(gross) - round_trip_bps + funding_accrual
+    return float(gross) - round_trip_bps
+
+
+def _n_legs_for(direction: str, candidate_code: str, cfg: V7SConfig) -> int:
+    """Number of legs charged in the cost model.
+
+    - Direction E shorts: 1 leg.
+    - Direction D, D0 naked: 1 leg.
+    - Direction D, D1/D2/D3: 2 legs (symbol short + one hedge long).
+    - Direction D, D4 basket: 1 + len(basket) legs.
+
+    The ``_nc`` (no-confirmation) suffix used by the ablation pass does not
+    change leg count — we treat the candidate prefix as the cost source.
+    """
+    if direction != DIRECTION_D:
+        return 1
+    base = candidate_code.removesuffix("_nc")
+    if base == CANDIDATE_D0:
+        return 1
+    if base == CANDIDATE_D4:
+        return 1 + len(cfg.d_basket_symbols)
+    return 2
+
+
+def _net_at(
+    direction: str,
+    candidate_code: str,
+    gross: float,
+    holding_bars: int,
+    cost_bps: float,
+    extra_slippage_bps: float,
+    cfg: V7SConfig,
+) -> float:
+    """Dispatch to the right cost model based on direction + candidate."""
+    n_legs = _n_legs_for(direction, candidate_code, cfg)
+    if n_legs == 1 and direction != DIRECTION_D:
+        return _net_short_return(gross, holding_bars, cost_bps, extra_slippage_bps, cfg)
+    return _net_pair_return(gross, holding_bars, cost_bps, extra_slippage_bps, cfg, n_legs=n_legs)
+
+
 def _attach_focal_net(trades: pd.DataFrame, cfg: V7SConfig) -> pd.DataFrame:
-    """Add ``net20`` and ``net30`` columns at focal slippage."""
+    """Add ``net20`` and ``net30`` columns at focal slippage (direction + candidate aware)."""
     if trades.empty:
         return trades
     out = trades.copy()
     holding = pd.to_numeric(out.get("holding_bars", 0), errors="coerce").fillna(0).astype(int)
     gross = pd.to_numeric(out.get("gross_return", float("nan")), errors="coerce")
+    direction = out.get("direction", pd.Series([DIRECTION_E] * len(out))).astype(str)
+    candidate = out.get("candidate_code", pd.Series([""] * len(out))).astype(str)
     nets: dict[str, list[float]] = {"net20": [], "net30": []}
-    for g, h in zip(gross, holding):
-        nets["net20"].append(_net_short_return(g, h, 20.0, cfg.focal_extra_slippage_bps, cfg))
-        nets["net30"].append(_net_short_return(g, h, 30.0, cfg.focal_extra_slippage_bps, cfg))
+    for g, h, d, c in zip(gross, holding, direction, candidate):
+        nets["net20"].append(_net_at(d, c, g, h, 20.0, cfg.focal_extra_slippage_bps, cfg))
+        nets["net30"].append(_net_at(d, c, g, h, 30.0, cfg.focal_extra_slippage_bps, cfg))
     out["net20"] = nets["net20"]
     out["net30"] = nets["net30"]
     return out
@@ -615,17 +1052,22 @@ def _short_cost_grid(trades: pd.DataFrame, cfg: V7SConfig) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     gross = pd.to_numeric(trades.get("gross_return"), errors="coerce")
     holding = pd.to_numeric(trades.get("holding_bars", 0), errors="coerce").fillna(0).astype(int)
+    direction_series = trades.get("direction", pd.Series([DIRECTION_E] * len(trades))).astype(str)
+    candidate_series = trades.get("candidate_code", pd.Series([""] * len(trades))).astype(str)
     for cost_bps in cfg.cost_grid_bps:
         for extra in cfg.extra_slippage_bps:
-            nets = [_net_short_return(g, h, cost_bps, extra, cfg) for g, h in zip(gross, holding)]
+            nets = [
+                _net_at(d, c, g, h, cost_bps, extra, cfg)
+                for d, c, g, h in zip(direction_series, candidate_series, gross, holding)
+            ]
             trades_n = trades.assign(_net=nets)
-            for (direction, code, execution), sub in trades_n.groupby(["direction", "candidate_code", "execution"]):
+            for (g_direction, g_code, g_execution), sub in trades_n.groupby(["direction", "candidate_code", "execution"]):
                 net = pd.to_numeric(sub["_net"], errors="coerce")
                 rows.append(
                     {
-                        "direction": direction,
-                        "candidate_code": code,
-                        "execution": execution,
+                        "direction": g_direction,
+                        "candidate_code": g_code,
+                        "execution": g_execution,
                         "cost_bps": cost_bps,
                         "extra_slippage_bps": extra,
                         "n_trades": int(net.notna().sum()),
@@ -1186,6 +1628,9 @@ def _write_candidate_notes(
 # --------------------------------------------------------------------------------------
 
 
+SUPPORTED_DIRECTIONS: tuple[str, ...] = (DIRECTION_E, DIRECTION_D)
+
+
 def write_v7s_short_alpha(
     feature_path: Path,
     instruments: pd.DataFrame,
@@ -1196,23 +1641,22 @@ def write_v7s_short_alpha(
 ) -> dict[str, Path]:
     """Run the v7S Short Alpha Exploration pipeline end-to-end.
 
-    Currently produces the ten docx-mandated CSVs for Direction E only.
-    The other directions are listed in ``cfg.enabled_directions`` but
-    raise ``NotImplementedError`` if requested without a follow-up commit.
-
-    Returns a dict of output file paths keyed by CSV name.
+    Iterates ``cfg.enabled_directions`` and runs each supported direction's
+    collector. Directions A/B/C remain ``NotImplementedError`` until their
+    data plumbing lands. Outputs are emitted per-direction under
+    ``cfg.report_root / <direction>/`` so each direction has the docx-mandated
+    ten CSVs + candidate_notes.md.
 
     Missing trade cache or feature parquet is allowed — the run writes
-    empty CSV stubs so the directory structure is identifiable, and the
-    candidate_notes.md flags the run as ``no_data``.
-    """
-    report_root = ensure_dir(cfg.report_root / DIRECTION_E)
+    empty stubs and the candidate_notes.md flags ``no_data``.
 
+    Returns a dict of output paths keyed as ``<direction>:<csv_name>``.
+    """
     for d in cfg.enabled_directions:
-        if d != DIRECTION_E:
+        if d not in SUPPORTED_DIRECTIONS:
             raise NotImplementedError(
                 f"v7S Direction {d} is configured but not yet implemented. "
-                "Only Direction E is wired in this commit."
+                f"Supported: {SUPPORTED_DIRECTIONS}."
             )
 
     sell_flow_audit = "orderflow_loaded"
@@ -1220,18 +1664,45 @@ def write_v7s_short_alpha(
     if orderflow_lookup is None:
         sell_flow_audit = "orderflow_missing"
 
-    if not cfg.trade_cache_path.exists() or not feature_path.exists():
-        empty_summary = pd.DataFrame()
-        outputs = _write_empty_outputs(report_root, empty_summary, cfg, sell_flow_audit=sell_flow_audit)
+    outputs: dict[str, Path] = {}
+
+    if not feature_path.exists():
+        for d in cfg.enabled_directions:
+            report_root = ensure_dir(cfg.report_root / d)
+            stubs = _write_empty_outputs(
+                report_root, pd.DataFrame(), cfg, sell_flow_audit=sell_flow_audit
+            )
+            for k, p in stubs.items():
+                outputs[f"{d}:{k}"] = p
         return outputs
 
     rank30, rank90, _ = _rank_inputs(feature_path, instruments, config)
-    trade_cache = read_parquet(cfg.trade_cache_path)
+    trade_cache = (
+        read_parquet(cfg.trade_cache_path) if cfg.trade_cache_path.exists() else pd.DataFrame()
+    )
     pool = _focus_pool(trade_cache, cfg.long_pool_name) if not trade_cache.empty else pd.DataFrame()
     cic_long_index = _build_cic_long_index(pool, cfg.v34_cfg) if not pool.empty else {}
+    long_monthly_df = long_monthly if long_monthly is not None else _derive_long_monthly(pool)
 
-    trades = _collect_direction_e_signals(
-        feature_path, rank30, rank90, config, cic_long_index, orderflow_lookup, cfg
+    all_trades: list[pd.DataFrame] = []
+    if DIRECTION_E in cfg.enabled_directions:
+        if cic_long_index:
+            e_trades = _collect_direction_e_signals(
+                feature_path, rank30, rank90, config, cic_long_index, orderflow_lookup, cfg
+            )
+            if not e_trades.empty:
+                all_trades.append(e_trades)
+        else:
+            print("v7S Direction E: CIC long index empty — skipping.", flush=True)
+    if DIRECTION_D in cfg.enabled_directions:
+        d_trades = _collect_direction_d_signals(
+            feature_path, rank30, rank90, config, cfg
+        )
+        if not d_trades.empty:
+            all_trades.append(d_trades)
+
+    trades = (
+        pd.concat(all_trades, ignore_index=True) if all_trades else pd.DataFrame()
     )
     trades = _attach_focal_net(trades, cfg)
 
@@ -1241,8 +1712,6 @@ def write_v7s_short_alpha(
             g = _read_symbol_features(feature_path, rank30, rank90, sym, config)
             if not g.empty:
                 group_cache[sym] = g.sort_values("bar_open_time").reset_index(drop=True)
-
-    long_monthly_df = long_monthly if long_monthly is not None else _derive_long_monthly(pool)
 
     summary = _short_candidate_summary(trades, cfg)
     cost_grid = _short_cost_grid(trades, cfg)
@@ -1254,23 +1723,40 @@ def write_v7s_short_alpha(
     symbol_contrib = _symbol_contribution(trades, cfg)
     baseline = _matched_random_baseline(trades, cfg)
 
-    summary = _evaluate_gates(summary, cost_grid, first_touch, vs_no_long, hedge, month_cap, symbol_contrib, baseline, cfg)
-
-    outputs = _persist_outputs(
-        report_root,
-        trades=trades,
-        summary=summary,
-        cost_grid=cost_grid,
-        first_touch=first_touch,
-        vs_no_long=vs_no_long,
-        vs_exit_long=vs_exit_long,
-        hedge=hedge,
-        month_cap=month_cap,
-        symbol_contrib=symbol_contrib,
-        baseline=baseline,
-        cfg=cfg,
-        sell_flow_audit=sell_flow_audit,
+    summary = _evaluate_gates(
+        summary, cost_grid, first_touch, vs_no_long, hedge, month_cap, symbol_contrib, baseline, cfg
     )
+
+    for d in cfg.enabled_directions:
+        report_root = ensure_dir(cfg.report_root / d)
+        d_trades = trades[trades["direction"].astype(str) == d] if not trades.empty else trades
+        d_summary = summary[summary["direction"].astype(str) == d] if not summary.empty else summary
+        d_cost = cost_grid[cost_grid["direction"].astype(str) == d] if not cost_grid.empty else cost_grid
+        d_first = first_touch[first_touch["direction"].astype(str) == d] if not first_touch.empty else first_touch
+        d_vsnl = vs_no_long[vs_no_long["direction"].astype(str) == d] if not vs_no_long.empty else vs_no_long
+        d_vsex = vs_exit_long[vs_exit_long["direction"].astype(str) == d] if not vs_exit_long.empty else vs_exit_long
+        d_hedge = hedge[hedge["direction"].astype(str) == d] if not hedge.empty else hedge
+        d_month = month_cap[month_cap["direction"].astype(str) == d] if not month_cap.empty else month_cap
+        d_sym = symbol_contrib[symbol_contrib["direction"].astype(str) == d] if not symbol_contrib.empty else symbol_contrib
+        d_base = baseline[baseline["direction"].astype(str) == d] if not baseline.empty else baseline
+        d_outputs = _persist_outputs(
+            report_root,
+            trades=d_trades,
+            summary=d_summary,
+            cost_grid=d_cost,
+            first_touch=d_first,
+            vs_no_long=d_vsnl,
+            vs_exit_long=d_vsex,
+            hedge=d_hedge,
+            month_cap=d_month,
+            symbol_contrib=d_sym,
+            baseline=d_base,
+            cfg=cfg,
+            sell_flow_audit=sell_flow_audit,
+        )
+        for k, p in d_outputs.items():
+            outputs[f"{d}:{k}"] = p
+
     return outputs
 
 

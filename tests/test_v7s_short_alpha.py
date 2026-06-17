@@ -13,15 +13,24 @@ import pandas as pd
 import pytest
 
 from pressure_graph.reports.v7s_short_alpha import (
+    CANDIDATE_D0,
+    CANDIDATE_D1,
     CANDIDATE_E1,
+    D_CANDIDATES,
+    DIRECTION_D,
     DIRECTION_E,
     GATE_NAMES,
     V7SConfig,
+    _emit_direction_d_signals,
     _evaluate_gates,
     _gate_beta_high_gone,
+    _gate_beta_overextended,
+    _gate_beta_reclaim_failure,
+    _gate_leader_weakening,
     _gate_sell_flow_confirms,
     _matched_random_baseline,
     _month_cap_leave_one_month,
+    _net_pair_return,
     _short_candidate_summary,
     _symbol_contribution,
     write_v7s_short_alpha,
@@ -235,35 +244,152 @@ class TestVerdictEvaluator:
 
 
 class TestDriverNoData:
-    def test_no_data_writes_stub_files(self, tmp_path: Path) -> None:
+    def test_no_data_writes_stub_files_for_each_direction(self, tmp_path: Path) -> None:
         cfg = V7SConfig(
             report_root=tmp_path / "v7s_short_alpha",
             trade_cache_path=tmp_path / "missing_trade_cache.parquet",
+            enabled_directions=(DIRECTION_E, "D_relative_value_pair"),
         )
-        # Feature path also does not exist.
         outputs = write_v7s_short_alpha(
             feature_path=tmp_path / "missing_features.parquet",
             instruments=pd.DataFrame(),
             config=None,
             cfg=cfg,
         )
-        assert outputs["summary"].exists()
-        assert outputs["candidate_notes"].exists()
-        notes = outputs["candidate_notes"].read_text(encoding="utf-8")
+        # Outputs are keyed as "<direction>:<csv_name>".
+        for direction in (DIRECTION_E, "D_relative_value_pair"):
+            for key in (
+                "summary",
+                "cost_grid",
+                "first_touch",
+                "vs_no_long",
+                "vs_exit_long",
+                "hedge",
+                "month_cap",
+                "symbol_contrib",
+                "baseline",
+                "candidate_notes",
+            ):
+                k = f"{direction}:{key}"
+                assert k in outputs, f"missing key: {k}"
+                assert outputs[k].exists(), f"missing stub: {k}"
+        notes = outputs[f"{DIRECTION_E}:candidate_notes"].read_text(encoding="utf-8")
         assert "No data" in notes
-        # All ten standardized CSV outputs must exist as stubs.
-        for key in (
-            "summary",
-            "cost_grid",
-            "first_touch",
-            "vs_no_long",
-            "vs_exit_long",
-            "hedge",
-            "month_cap",
-            "symbol_contrib",
-            "baseline",
-        ):
-            assert outputs[key].exists(), f"missing stub: {key}"
+
+
+class TestDirectionDGates:
+    def _group(
+        self,
+        ret_pcts: list[float],
+        btc_ret_4hs: list[float],
+        highs: list[float],
+        closes: list[float],
+    ) -> pd.DataFrame:
+        n = len(ret_pcts)
+        return pd.DataFrame(
+            {
+                "feature_time": pd.date_range("2026-01-01", periods=n, freq="15min", tz="UTC"),
+                "bar_open_time": pd.date_range("2026-01-01", periods=n, freq="15min", tz="UTC"),
+                "symbol": ["DOGEUSDT"] * n,
+                "exchange": ["binance"] * n,
+                "btc_market_state": ["BTC_chop"] * n,
+                "ret_4h_percentile": ret_pcts,
+                "btc_ret_4h": btc_ret_4hs,
+                "high": highs,
+                "low": [h * 0.99 for h in highs],
+                "close": closes,
+                "open": closes,
+            }
+        )
+
+    def test_beta_overextended_fires_when_lookback_hit_threshold(self) -> None:
+        cfg = V7SConfig(d_lookback_bars=4)
+        group = self._group(
+            ret_pcts=[60, 70, 96, 80, 70],
+            btc_ret_4hs=[0, 0, 0, 0, 0],
+            highs=[100, 101, 102, 101, 100],
+            closes=[100, 101, 102, 101, 100],
+        )
+        assert _gate_beta_overextended(group, idx=4, threshold=95.0, cfg=cfg) is True
+
+    def test_beta_overextended_fails_when_never_hot(self) -> None:
+        cfg = V7SConfig(d_lookback_bars=4)
+        group = self._group(
+            ret_pcts=[60, 70, 80, 70, 70],
+            btc_ret_4hs=[0, 0, 0, 0, 0],
+            highs=[100, 101, 102, 101, 100],
+            closes=[100, 101, 102, 101, 100],
+        )
+        assert _gate_beta_overextended(group, idx=4, threshold=95.0, cfg=cfg) is False
+
+    def test_leader_weakening_fires_when_btc_drops(self) -> None:
+        cfg = V7SConfig(d_leader_weak_ret_4h=-0.005)
+        group = self._group(
+            ret_pcts=[60] * 5,
+            btc_ret_4hs=[0, 0, 0, 0, -0.01],
+            highs=[100] * 5,
+            closes=[100] * 5,
+        )
+        assert _gate_leader_weakening(group, idx=4, cfg=cfg) is True
+
+    def test_leader_weakening_fails_when_btc_flat(self) -> None:
+        cfg = V7SConfig(d_leader_weak_ret_4h=-0.005)
+        group = self._group(
+            ret_pcts=[60] * 5,
+            btc_ret_4hs=[0, 0, 0, 0, -0.001],
+            highs=[100] * 5,
+            closes=[100] * 5,
+        )
+        assert _gate_leader_weakening(group, idx=4, cfg=cfg) is False
+
+    def test_reclaim_failure_fires_when_close_below_recent_high(self) -> None:
+        cfg = V7SConfig(d_lookback_bars=4, d_reclaim_tolerance=0.015)
+        group = self._group(
+            ret_pcts=[60] * 5,
+            btc_ret_4hs=[0] * 5,
+            highs=[100, 110, 108, 105, 104],
+            closes=[100, 110, 108, 105, 104],  # 104 is ~5.5% below 110
+        )
+        assert _gate_beta_reclaim_failure(group, idx=4, cfg=cfg) is True
+
+    def test_reclaim_failure_does_not_fire_at_high(self) -> None:
+        cfg = V7SConfig(d_lookback_bars=4, d_reclaim_tolerance=0.015)
+        group = self._group(
+            ret_pcts=[60] * 5,
+            btc_ret_4hs=[0] * 5,
+            highs=[100, 102, 100, 101, 102],
+            closes=[100, 102, 100, 101, 102],  # 102 == lookback high
+        )
+        assert _gate_beta_reclaim_failure(group, idx=4, cfg=cfg) is False
+
+    def test_emit_d_signals_returns_at_least_one_when_all_gates_hold(self) -> None:
+        cfg = V7SConfig(
+            d_lookback_bars=4,
+            d_cooldown_bars=2,
+            d_overextended_pct=95.0,
+            d_leader_weak_ret_4h=-0.005,
+            d_reclaim_tolerance=0.015,
+        )
+        group = self._group(
+            ret_pcts=[60, 70, 96, 80, 70, 60, 60],
+            btc_ret_4hs=[0, 0, 0, 0, -0.01, -0.01, -0.01],
+            highs=[100, 101, 110, 108, 104, 103, 102],
+            closes=[100, 101, 110, 108, 104, 103, 102],
+        )
+        signals = _emit_direction_d_signals(group, cfg)
+        assert len(signals) >= 1
+        sig = signals[0]
+        assert sig["direction"] == DIRECTION_D
+        assert sig["symbol"] == "DOGEUSDT"
+
+
+class TestPairCost:
+    def test_pair_net_charges_four_round_trips(self) -> None:
+        cfg = V7SConfig()
+        gross = 0.020
+        net = _net_pair_return(gross, holding_bars=32, cost_bps=20.0, extra_slippage_bps=0.0, cfg=cfg)
+        # 4 * 20bps = 80bps = 0.008. Net should be 0.020 - 0.008 = 0.012
+        assert abs(net - 0.012) < 1e-9
 
 
 class TestUnimplementedDirections:
