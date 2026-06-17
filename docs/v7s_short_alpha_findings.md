@@ -368,6 +368,69 @@ research per the 77 docx directive. Do NOT brand any follow-up as
    2.0/2.5 % covers the productive corner. Further tuning here is
    overfitting.
 
+## Direction D2 — CVD-confirmed relative-value pair (77.docx §8)
+
+### First batch (Sep-Nov 2025 only, partial CVD coverage)
+
+Gates: beta_overextended (ret_4h_pct ≥ 95) + relative_overperf (beta -
+btc_ret_4h ≥ 2 %) + beta_failed_followthrough (close ≥ 1.5 % below
+lookback high) + **CVD divergence** (beta's buy_sell_imbalance ≤ -0.05
+AND hedge's buy_sell_imbalance ≥ -0.05).
+
+Two candidates × three horizons. Hedge symbols loaded continuously
+from `binance_continuous_cvd` shards.
+
+| Candidate | Horizon | N | mean_gross | mean_net20 | mean_net30 | win | verdict |
+|---|---|---|---|---|---|---|---|
+| D2_btc_cvd_pair | h4 | 66 | +1.6 bps | -78 bps | -118 bps | 44 % | no_value |
+| D2_btc_cvd_pair | h12 | 66 | -22 bps | -102 bps | -142 bps | 47 % | no_value |
+| D2_btc_cvd_pair | h24 | 66 | +32 bps | -48 bps | -88 bps | 59 % | no_value |
+| D2_eth_cvd_pair | h4 | 30 | +43 bps | -37 bps | -77 bps | 33 % | no_value |
+| D2_eth_cvd_pair | h12 | 30 | +140 bps | +60 bps | +20 bps | 40 % | no_value |
+| **D2_eth_cvd_pair** | **h24** | **30** | **+349 bps** | **+269 bps** | **+229 bps** | **63 %** | **no_value** |
+
+### gate_checks verdict on D2_eth h24
+
+- bootstrap 95 % CI = `[+0.96 %, +4.38 %]`, **p(mean>0) = 0.999** —
+  signal is statistically REAL on this sample.
+- BUT: best_month_share = **113 %**. The split:
+  - 2025-09 (N=14): -0.107 sum, mean -0.76 %
+  - 2025-10 (N=16): **+0.913 sum**, mean +5.71 %
+  - 2025-11: ETH backfill incomplete — no D2_eth rows yet
+- walk_forward buckets: -1.16 % / +3.02 % / +6.20 % (bucket 0 negative)
+- best_symbol_share = 42 % (one beta over the 35 % bar)
+- Verdict: `no_value` on 5 of 8 distribution gates.
+
+### Read
+
+D2_eth_cvd_pair h24 reproduces A1's exact pattern: real flow-divergence
+alpha in 2025-Q4, but the same single month (2025-10) carries it.
+This is the SECOND independent signal axis (cross-exchange flow
+asymmetry, with CVD-confirmed beta-vs-leader pair) that lights up in
+that one regime and not before.
+
+The reproduction across two structurally distinct signal builds is
+itself evidence that **2025-10's regime was a real cross-exchange
+info-propagation event** (uncrowded funding + extreme volume + OI
+surge + BTC up), not a per-strategy fitting artefact.
+
+D2_btc_cvd_pair does NOT pay — same conclusion as the old D1_pair_btc:
+beta and BTC are too correlated, the hedge cost wipes the signal.
+Only the ETH-hedge variant produces meaningful flow asymmetry.
+
+### What's pending (backfills running locally with proxy)
+
+Two backfills launched in background to settle whether the 2025-10
+regime was unique or recurs:
+
+1. **Backward window** 2025-06-01 → 2025-09-14 (848 tasks): tests
+   if D2 alpha was absent in the pre-Q4 baseline.
+2. **Forward window** 2025-11-16 → 2026-06-01 (1584 tasks): provides
+   OOS months to test if the alpha persists.
+
+When complete, D2 will be re-run on the full ~1 year window. The
+walk-forward + bootstrap gates will then have an OOS verdict surface.
+
 ## Direction E — strict CIC-failure-confirmed (previously closed)
 
 Recap from prior commit `97fb697`:
