@@ -65,6 +65,7 @@ from pressure_graph.pipeline import (
     run_v3_5_failure_risk_layer_bridge_from_features,
     run_v4s_failure_state_graph_from_features,
     run_v6s_path_c_short_validation_from_features,
+    run_v7s_short_alpha_from_features,
     run_failure_overlay_shadow_from_features,
     run_v06a_reclaim_alpha_from_features,
 )
@@ -932,6 +933,17 @@ def run_v6s_path_c_short_validation(
     """v6S Path C short validation — discipline-grade test of the v4S survivor (research only)."""
     cfg = load_config(config)
     outputs = run_v6s_path_c_short_validation_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v7s-short-alpha")
+def run_v7s_short_alpha(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """v7S Short Alpha Exploration — orthogonal lane, Direction E only this commit (research only)."""
+    cfg = load_config(config)
+    outputs = run_v7s_short_alpha_from_features(cfg)
     for name, path in outputs.items():
         typer.echo(f"{name}: {path}")
 

@@ -99,6 +99,10 @@ from pressure_graph.reports.v6s_path_c_short_validation import (
     V6SConfig,
     write_v6s_path_c_short_validation,
 )
+from pressure_graph.reports.v7s_short_alpha import (
+    V7SConfig,
+    write_v7s_short_alpha,
+)
 from pressure_graph.reports.failure_overlay_shadow import (
     ShadowConfig,
     write_failure_overlay_shadow,
@@ -732,6 +736,20 @@ def run_v6s_path_c_short_validation_from_features(
     instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
     return write_v6s_path_c_short_validation(
         features_path, instruments, config, v6s_config or V6SConfig()
+    )
+
+
+def run_v7s_short_alpha_from_features(
+    config: ExperimentConfig,
+    v7s_config: V7SConfig | None = None,
+) -> dict[str, Path]:
+    """v7S Short Alpha Exploration — orthogonal short lane (Direction E only this commit)."""
+    features_path = (
+        config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    )
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v7s_short_alpha(
+        features_path, instruments, config, v7s_config or V7SConfig()
     )
 
 
