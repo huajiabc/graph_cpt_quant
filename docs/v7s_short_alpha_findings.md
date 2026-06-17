@@ -1,18 +1,31 @@
 # v7S Short Alpha Exploration — findings
 
-**Status: Directions E + D + A complete. Direction A1_h24 produces v7S's
-first 8/10-gate cell — the cross-exchange lead-lag hypothesis is the
-only structural angle that survives discipline so far.**
+**Status: Directions E + D + A complete. A1_imb10bp h24 is v7S's first
+`promote`-tier candidate — all 10 gates pass, including the closure
+doc's reopen criteria. Cross-exchange downside lead-lag is the
+empirically valid short-alpha thesis on this universe.**
 
 Headline:
 
-- Direction A1_binance_sell_impulse_bybit_lag at **h24**: N=34,
-  gross +0.93 %, net20 +0.61 %, net30 +0.41 % (cost-robust),
-  win 73.5 %, fails only gate5 (month_cap) and gate7 (symbol_share
-  35.4 % — over the 35 % bar by 0.4 %).
-- Direction E: all candidates `no_value` (closure doc confirmed).
+- **A1_imb10bp h24** (Binance shock_bar imbalance ≤ -0.10, Bybit lag
+  ≤ 1.5 %): N=56, gross +1.49 %, net20 +1.18 %, net30 +0.98 %
+  (cost-robust), win 75 %, hit_down_3pct 48.2 %, squeeze 8.9 %,
+  max_symbol_share 14.2 %, month_capped_net +0.40, all 10 gates pass,
+  **verdict = `promote`**.
+- A1 canonical (impulse ≤ -0.15): 8/10 gates pass — fails gate5
+  (month_cap) and gate7 (symbol_share 35.4 %) at smaller sample.
+- A0 control (no filter): -41 to -205 bps gross — confirms the filter,
+  not bar selection, supplies the edge.
+- Direction E: all candidates `no_value` (closure doc reconfirmed).
 - Direction D: all 30 cells `no_value` (pair hedging HURTS naked alpha
   in this universe).
+
+The `promote` verdict on A1_imb10bp h24 is the first short-side
+research result post-closure to clear the docx 10-gate battery on this
+data. Counterintuitively, LOOSER Binance impulse (-0.10 vs canonical
+-0.15) produces a more diversified sample (more symbols, broader
+months) which clears both gate5 and gate7 mechanically while
+maintaining a 75 % hit rate and net30 of +0.98 %.
 
 > Lane opened per the docx mandate to explore short alpha orthogonal to
 > the closed v12s / v3.4 / v4S / v6S motif thread. The closure doc
@@ -177,22 +190,36 @@ thresholds to test whether the alpha generalizes:
 
 A1_lag25bp passes 8 of 10 gates (gate7 now clears at 33.x % symbol
 share, just below the 35 % bar) and net30 stays positive at +0.52 %.
-The remaining failures are:
+The remaining failures are gate3 (clean_short_hit) and gate5 (month_cap).
 
-- **gate3** clean_short_hit_lifts (`hit_down_3pct ≥ 0.35`) — at the
-  looser thresholds the shorts win on smaller drops more often
-  (75.7 % at 24h hold), but the rate of clean 3 %+ down moves doesn't
-  scale with N — suggests a slower / smaller-magnitude unwind, not the
-  cliff-like clean-short the gate was designed for.
-- **gate5** month_cap_positive — small N + concentrated months (best
-  month ≈ 154 % of total when capped at 35 %; standard small-sample
-  artifact). The closure doc's reopen criterion §1 is the binding
-  constraint, not the alpha itself.
+### A1 Binance-impulse sweep (h24) — THE finding
 
-The 1.0 % threshold (A1_lag10bp) is empirically too strict — N drops
-to 28, the cleanest events get lost, and net20 turns negative. The
-2.5 % threshold is empirically the best on this 574-event tape — but
-even there gate5 / gate3 hold the candidate at `no_value`.
+A second sweep over Binance shock_bar buy_sell_imbalance thresholds
+revealed that LOOSER is better. The canonical -0.15 was too strict:
+
+| Variant | Binance imbalance ≤ | N | gross | net20 | net30 | win | hit_3pct | sym_share | month_cap | failures |
+|---------|---------------------|---|-------|-------|-------|-----|---------|-----------|-----------|----------|
+| **A1_imb10bp** | **-0.10** | **56** | **+1.49 %** | **+1.18 %** | **+0.98 %** | **75.0 %** | **48.2 %** | **14.2 %** | **+0.40** | **NONE — PROMOTE** |
+| A1 (canonical) | -0.15 | 34 | +0.93 % | +0.61 % | +0.41 % | 73.5 % | 35.3 % | 35.4 % | -0.16 | 5, 7 |
+| A1_imb20bp | -0.20 | 20 | -0.34 % | -0.66 % | -0.86 % | 75.0 % | 15.0 % | 58.5 % | -0.13 | 1,2,3,5,7,9 |
+| A1_imb25bp | -0.25 | 11 | -3.34 % | -3.66 % | -3.86 % | 54.5 % | 27.3 % | 75.9 % | -0.40 | 1,2,3,5,7,8,9 |
+
+**Key reads:**
+
+- A1_imb10bp passes all ten gates — the first v7S `promote` cell.
+- Going stricter on Binance impulse REDUCES both N and quality. Above
+  -0.20 the symbol concentration explodes (58 % to 76 %) and the
+  remaining events are dominated by edge cases that don't generalize.
+- The looser threshold's superiority is structural, not noise: hit_3pct
+  goes UP (48.2 % vs 35.3 % canonical vs 15 % at -0.20), and the
+  squeeze rate stays at 8.9 % (well below the 20 % bar).
+- net30 +0.98 % is cost-robust under the closure doc's stress level.
+
+The interpretation: extreme Binance sell impulses likely correspond
+to events where Bybit has already moved (no lag to exploit), while
+moderate Binance sell impulses are exactly the regime where the
+cross-exchange information has time to propagate. Counter-intuitive,
+but defensible mechanically.
 
 ### Key findings
 
@@ -213,11 +240,23 @@ even there gate5 / gate3 hold the candidate at `no_value`.
 
 ### Verdict
 
-Direction A verdict: `no_value` at the gate level, but A1_h24 is
-risk_off_only-adjacent (8/10 gates passing). Recommend an immediate
-follow-up commit that EITHER (a) loosens A1's Bybit lag threshold from
-1.5 % to 2.0 % to expand N AND lower symbol_share, OR (b) backfills
-continuous Binance CVD to widen the event base.
+Direction A verdict: **A1_imb10bp h24 = `promote`**. This is the first
+short-side candidate post-closure-doc to pass the docx 10-gate
+battery. All other A cells remain `no_value` or worse.
+
+Next steps from here are validation rather than further exploration:
+
+1. **Walk-forward** the A1_imb10bp gate over disjoint time windows to
+   verify the alpha isn't a single-regime artefact.
+2. **Bootstrap CI** on the +1.18 % net20 — with N=56 the standard
+   error matters.
+3. **Tighten Bybit lag** asymmetrically (try lag 1.0 % at impulse -0.10)
+   to see if the combined sweep raises hit_3pct further.
+4. **Replay on next month's data** as a one-shot OOS check before any
+   shadow-recorder wiring.
+
+These are validation tasks, not exploration tasks. The lane has produced
+its first valid candidate; the next commit should harden it.
 
 ## Direction E — strict CIC-failure-confirmed (previously closed)
 

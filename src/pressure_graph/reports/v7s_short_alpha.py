@@ -248,6 +248,10 @@ class V7SConfig:
     # different Bybit-lag thresholds. The threshold sweep produces extra
     # candidate codes A1_lag1pct / A1_lag1p5pct / A1_lag2pct / A1_lag2p5pct.
     a_lag_threshold_sweep: tuple[float, ...] = (0.010, 0.015, 0.020, 0.025)
+    # A1 Binance-impulse threshold sweep — produces A1_imb<bps> candidates so
+    # we can see whether STRICTER Binance sell impulses raise the clean
+    # 3 %+-drop hit rate (gate3 currently fails on the canonical A1).
+    a_impulse_threshold_sweep: tuple[float, ...] = (-0.10, -0.15, -0.20, -0.25)
 
     # Matched-random baseline knobs (docx gate 8).
     random_baseline_draws: int = 100
@@ -1109,16 +1113,25 @@ def _collect_direction_a_signals(
             signals = _emit_direction_a_signals(events, group, candidate_code, cfg)
             for sig in signals:
                 rows.extend(_execute_direction_a(group, sig, cfg))
-        # A1 threshold sweep: re-run A1 logic at each lag threshold and tag
-        # the candidate code with the threshold suffix so the discipline view
-        # can see whether the alpha generalizes across thresholds.
+        # A1 lag threshold sweep — alpha vs Bybit's drop tolerance.
         original_lag = cfg.a_bybit_lag_max_drop_pct
         for thr in cfg.a_lag_threshold_sweep:
             if abs(thr - original_lag) < 1e-9:
-                # Already covered by the canonical A1 above.
                 continue
             sweep_cfg = replace(cfg, a_bybit_lag_max_drop_pct=thr)
             tag = f"lag{int(thr * 1000):d}bp"
+            signals = _emit_direction_a_signals(events, group, CANDIDATE_A1, sweep_cfg)
+            for sig in signals:
+                sig["candidate_code"] = f"A1_{tag}"
+                rows.extend(_execute_direction_a(group, sig, cfg))
+
+        # A1 Binance impulse sweep — alpha vs Binance sell impulse severity.
+        original_imb = cfg.a_binance_sell_impulse_max
+        for imb in cfg.a_impulse_threshold_sweep:
+            if abs(imb - original_imb) < 1e-9:
+                continue
+            sweep_cfg = replace(cfg, a_binance_sell_impulse_max=imb)
+            tag = f"imb{int(abs(imb) * 100):d}bp"  # imb10bp = -0.10, imb25bp = -0.25
             signals = _emit_direction_a_signals(events, group, CANDIDATE_A1, sweep_cfg)
             for sig in signals:
                 sig["candidate_code"] = f"A1_{tag}"
