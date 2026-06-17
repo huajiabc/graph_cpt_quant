@@ -298,6 +298,56 @@ Per-month breakdown (9 months, 4 positive / 5 negative or flat):
 Best month (2025-10) is **63.7 %** of total net — the closure doc's
 35 % §1 bar is broken nearly 2x.
 
+### A1 Regime Autopsy (77 docx P2 — research only, NOT an upgrade)
+
+Per-month regime profile from `scripts/v7s_a1_regime_autopsy.py`. 2025-10
+stands out on FOUR independent regime axes vs the eight other months:
+
+| month | n | mean_net20 | btc_ret_4h | btc_vol_pct | **funding_pct** | **oi_4h_pct** | **vol_z_4h** | btc_state |
+|---|---|---|---|---|---|---|---|---|
+| 2025-07 | 12 | -1.45 % | +0.59 % | 83 | 83 | 80 | 2.26 | chop |
+| 2025-09 | 3 | -2.60 % | +0.11 % | 98 | 60 | 95 | 2.06 | chop |
+| **2025-10** | **13** | **+3.23 %** | **+1.41 %** | **98.5** | **0.88** | **99.8** | **5.86** | **BTC_up** |
+| 2025-11 | 2 | -0.02 % | +0.85 % | 99.98 | 32 | 70 | 2.24 | chop |
+| 2025-12 | 3 | +4.31 % | +3.98 % | 92 | 63 | 98 | 2.23 | BTC_up |
+| 2026-01 | 11 | +2.70 % | +1.33 % | 95 | 71 | 80 | 2.39 | BTC_up |
+| 2026-03 | 3 | -2.71 % | +1.83 % | 94 | 82 | 56 | 2.25 | BTC_up |
+| 2026-05 | 8 | +1.96 % | +1.34 % | 69 | 79 | 92 | 2.38 | chop |
+| 2026-06 | 1 | -1.10 % | -1.07 % | 98 | 19 | 14 | 2.16 | chop |
+
+**The 2025-10 combo (uncrowded + extreme OI + extreme volume + BTC up)
+is structurally interpretable:** retail piles into a rally with
+volume + OI but funding hasn't caught up yet. Cross-exchange
+info-propagation lag is exactly the type of edge that would peak in
+such a regime — institutional Binance flow leads, slower venues lag.
+The cell IS a tradable regime in principle.
+
+**ex-2025-10 sample:** mean_net20 = **+0.56 %** (N=43, win 67 %).
+Still positive but cut in half from the full +1.18 %. The regime
+is NOT all of the alpha — there's residual edge.
+
+**Shuffled-regime control:**
+
+| metric | observed | control_mean | control_p95 | p_more_extreme |
+|--------|---------|--------------|-------------|----------------|
+| target_month_share (2025-10) | 0.637 | 0.228 | 0.641 | **0.053** |
+
+The 2025-10 share at 0.637 is right at the 95th percentile of
+shuffled distributions; p ≈ 0.053 is borderline-significant. The
+concentration is real but only marginally distinguishable from
+calendar noise on N=56.
+
+**Promotion gate per 77 docx P2:**
+
+- ex-2025-10 mean > 0 ✓ (`+56 bps`)
+- shuffled-regime control p < 0.05 ✗ (`p = 0.053`, borderline)
+- OOS replay on fresh months still positive — waiting (P3 harness
+  pending)
+
+Until all three pass, A1 stays in `diagnostic_only` / regime-event
+research per the 77 docx directive. Do NOT brand any follow-up as
+"A1 Strategy Upgrade".
+
 ### Next steps from here
 
 1. **Regime detection.** The 2025-10 dominance suggests a Q4 cross-
