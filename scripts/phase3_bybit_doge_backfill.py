@@ -14,6 +14,7 @@ Usage: ``python scripts/phase3_bybit_doge_backfill.py`` from the
 from __future__ import annotations
 
 import argparse
+import http.client
 import logging
 import sys
 import time
@@ -80,6 +81,7 @@ def main() -> int:
         urllib.error.URLError,
         ConnectionResetError,
         OSError,
+        http.client.HTTPException,  # covers IncompleteRead / BadStatusLine / RemoteDisconnected
     )
 
     def _backfill_day_with_retry(day: date, max_attempts: int = 5) -> str:
