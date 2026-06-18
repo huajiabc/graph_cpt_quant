@@ -1317,6 +1317,69 @@ def run_sell_pressure_propagation_cross_venue(
         typer.echo(f"{name}: {path}")
 
 
+@app.command("run-sell-pressure-propagation-phase3")
+def run_sell_pressure_propagation_phase3(
+    binance_root: Path = typer.Option(
+        Path("data/orderflow_history/binance_um/continuous"),
+        help="Binance UM continuous CVD root.",
+    ),
+    bybit_root: Path = typer.Option(
+        Path("data/orderflow_history/bybit_linear/continuous"),
+        help="Bybit linear continuous CVD root.",
+    ),
+    basket: str = typer.Option(
+        "DOGEUSDT,SHIBUSDT,PEPEUSDT,WIFUSDT,BONKUSDT,FLOKIUSDT,1000PEPEUSDT,1000BONKUSDT,ORDIUSDT,PENGUUSDT",
+        help="Comma-separated DOGE-like meme basket; missing-on-disk symbols are reported as gaps, not errors.",
+    ),
+    primary_symbol: str = typer.Option(
+        "DOGEUSDT",
+        help="Primary symbol whose Bybit→Binance edge gets the per-month + execution-repair treatment.",
+    ),
+    primary_source_venue: str = typer.Option("bybit", help="Source venue tag."),
+    primary_target_venue: str = typer.Option("binance_um", help="Target venue tag."),
+    report_root: Path = typer.Option(
+        Path("reports/sell_pressure_propagation_phase3"),
+        help="Output directory for Phase 3 artefacts.",
+    ),
+    cost_bps: float = typer.Option(35.0, help="Cost band (fees + slippage) the gross short return is netted against."),
+    null_iterations: int = typer.Option(1000, help="Bootstrap iterations for the three Phase 3C nulls."),
+    bar_size_minutes: int = typer.Option(5, help="Bar size; must match the continuous-CVD writer output."),
+) -> None:
+    """Phase 3 validation: time stability, basket extension, three extra nulls, execution-repair diagnostic."""
+    from pressure_graph.reports.sell_pressure_propagation_phase3 import (
+        Phase3Inputs,
+        PropagationConfig,
+        run_phase3,
+    )
+
+    basket_tuple = tuple(s.strip().upper() for s in basket.split(",") if s.strip())
+    cfg = PropagationConfig(
+        bar_size_minutes=bar_size_minutes,
+        # Phase-3 sample windows are short; relax the multi-venue n_events
+        # gate the same way Phase 2B did (was 30; goal docx asks for at
+        # least one positive month per gate, so the gate lives in
+        # phase3a_verdict, not here).
+        min_events=20,
+        min_active_months=1,
+        max_month_share=1.0,
+    )
+    inputs = Phase3Inputs(
+        binance_root=binance_root,
+        bybit_root=bybit_root,
+        basket=basket_tuple,
+        primary_source_venue=primary_source_venue,
+        primary_target_venue=primary_target_venue,
+        primary_symbol=primary_symbol,
+        bar_size_minutes=bar_size_minutes,
+        cost_bps=cost_bps,
+        cfg=cfg,
+        null_iterations=null_iterations,
+    )
+    outputs = run_phase3(inputs, report_root)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
 @app.command("run-sell-pressure-propagation")
 def run_sell_pressure_propagation(
     cvd_root: Path = typer.Option(
