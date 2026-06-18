@@ -21,6 +21,21 @@ frozen csv, the script treats those as the "OOS" sample and shows
 what would happen if they were a future month. Real OOS mode: pass
 ``--actually-new`` so the script asserts the target month was NOT in
 the baseline (production use after a fresh backfill).
+
+A1_imb10bp_h24 watch protocol (the only candidate flagged for forward
+monitoring, decided 2026-06-18):
+
+    - Current verdict: no_value (gate5 fails — best_month_share = 63.7 %).
+    - Alpha emerged only in 2025-Q4; bucket-0 walk-forward = -1.19 %.
+    - Bootstrap CI on mean_net20 = [-0.40 %, +2.52 %], P(>0) = 93 %.
+    - Three promotion gates must ALL clear in a single replay before
+      reconsidering for shadow/live:
+        1. ex-target-month mean_net20 still > 0
+        2. shuffled-regime control p < 0.05 (currently 0.053)
+        3. target-month net20 > 0 (forward-OOS evidence)
+    - Auto-demote: if 3 consecutive monthly replays show
+      verdict_change == "newly_no_value" OR target_month_sum_net20 < 0,
+      drop A1_imb10bp_h24 from the registry and close the candidate.
 """
 from __future__ import annotations
 
@@ -59,7 +74,12 @@ CANDIDATE_REGISTRY: list[CandidateSpec] = [
         name="v7s_A1_imb10bp_h24",
         trades_path=REPORTS_ROOT / "v7s_short_alpha" / "A_cross_exchange_lag" / "short_trades.csv",
         candidate_filter={"candidate_code": "A1_imb10bp", "execution": "h24"},
-        notes="The promote-candidate that downgraded under tightened gate5; P3's primary OOS target.",
+        notes=(
+            "The promote-candidate that downgraded under tightened gate5; P3's primary OOS target. "
+            "Watch protocol: see module docstring. Promote only if ex-target>0 AND shuffled p<0.05 "
+            "AND target-month net20>0 in a single replay. Auto-demote after 3 consecutive "
+            "newly_no_value / negative target-month replays."
+        ),
     ),
     CandidateSpec(
         name="v7s_A1_canonical_h24",
