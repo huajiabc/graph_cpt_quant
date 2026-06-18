@@ -1267,6 +1267,99 @@ def run_failure_overlay_shadow(
         typer.echo(f"{name}: {path}")
 
 
+@app.command("run-sell-pressure-propagation-cross-venue")
+def run_sell_pressure_propagation_cross_venue(
+    binance_root: Path = typer.Option(
+        Path("data/orderflow_history/binance_um/continuous"),
+        help="Binance UM continuous CVD root.",
+    ),
+    bybit_root: Path = typer.Option(
+        Path("data/orderflow_history/bybit_linear/continuous"),
+        help="Bybit linear continuous CVD root.",
+    ),
+    symbols: str = typer.Option(
+        "BTCUSDT,ETHUSDT",
+        help="Comma-separated symbols available on BOTH venues.",
+    ),
+    report_root: Path = typer.Option(
+        Path("reports/sell_pressure_propagation_phase2b_crossvenue"),
+        help="Output directory for the cross-venue map.",
+    ),
+    min_events: int = typer.Option(
+        20,
+        help="Minimum events for a directed edge to survive (phase 2b runs on ~1 month — relax from default 30).",
+    ),
+) -> None:
+    """Cross-venue Downside Propagation Map (Phase 2B) — Binance UM × Bybit linear."""
+    from pressure_graph.reports.sell_pressure_propagation import (
+        PropagationConfig,
+        VenueSymbolSpec,
+        run_multi_venue_propagation_map,
+    )
+
+    sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    specs = tuple(
+        spec
+        for sym in sym_list
+        for spec in (
+            VenueSymbolSpec(f"binance_um:{sym}", "binance_um", binance_root, sym),
+            VenueSymbolSpec(f"bybit:{sym}", "bybit", bybit_root, sym),
+        )
+    )
+    cfg = PropagationConfig(
+        shuffled_iterations=1000,
+        min_events=min_events,
+        min_active_months=1,
+        max_month_share=1.0,
+    )
+    outputs = run_multi_venue_propagation_map(specs, report_root, cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-sell-pressure-propagation")
+def run_sell_pressure_propagation(
+    cvd_root: Path = typer.Option(
+        Path("data/orderflow_history/binance_um/continuous"),
+        help="Continuous CVD parquet root.",
+    ),
+    report_root: Path = typer.Option(
+        Path("reports/sell_pressure_propagation"),
+        help="Output directory for edge_map + summary.",
+    ),
+    symbols: str | None = typer.Option(
+        None,
+        help="Comma-separated symbols; default = all 8 with on-disk CVD.",
+    ),
+    entry_skip_bars: int = typer.Option(
+        1,
+        help="Skip the source event bar (default 1); pass 0 to reproduce the naive measurement.",
+    ),
+    shuffled_iterations: int = typer.Option(1000, help="Bootstrap iterations for shuffled null."),
+) -> None:
+    """Downside Propagation Map (goal docx 2026-06-18) — Phase 1 single-exchange."""
+    from pressure_graph.reports.sell_pressure_propagation import (
+        DEFAULT_SYMBOLS,
+        PropagationConfig,
+        run_sell_pressure_propagation_map,
+    )
+
+    sym_tuple = (
+        tuple(s.strip().upper() for s in symbols.split(",") if s.strip())
+        if symbols
+        else DEFAULT_SYMBOLS
+    )
+    cfg = PropagationConfig(
+        entry_skip_bars=entry_skip_bars,
+        shuffled_iterations=shuffled_iterations,
+    )
+    outputs = run_sell_pressure_propagation_map(
+        symbols=sym_tuple, cvd_root=cvd_root, report_root=report_root, cfg=cfg
+    )
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
 @app.command("run-all")
 def run_all(
     config: Path = typer.Option(Path("configs/v0.yaml"), help="Path to experiment config."),
