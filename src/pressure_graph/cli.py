@@ -88,6 +88,13 @@ from pressure_graph.pipeline import (
     run_v30_symbol_risk_off_overlay_from_features,
     run_v31_failure_position_management_from_features,
     run_v32_failure_state_atlas_from_features,
+    run_v3_3_failure_path_search_from_features,
+    run_v3_4_true_short_sleeve_from_features,
+    run_v3_5_failure_risk_layer_bridge_from_features,
+    run_v4s_failure_state_graph_from_features,
+    run_v6s_path_c_short_validation_from_features,
+    run_v7s_short_alpha_from_features,
+    run_failure_overlay_shadow_from_features,
     run_v06a_reclaim_alpha_from_features,
 )
 from pressure_graph.reports.v06a1 import load_v06a1_config
@@ -930,6 +937,17 @@ def run_v13_post_reclaim_slot(
         typer.echo(f"{name}: {path}")
 
 
+@app.command("run-v3-4-true-short-sleeve")
+def run_v3_4_true_short_sleeve(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """v3.4 true short sleeve research: SS1A..SS3B + 3-action compare + hedge (research only)."""
+    cfg = load_config(config)
+    outputs = run_v3_4_true_short_sleeve_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
 @app.command("run-v13a-checkpoint-robustness")
 def run_v13a_checkpoint_robustness(
     config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
@@ -937,6 +955,33 @@ def run_v13a_checkpoint_robustness(
     """Checkpoint robustness and O6 integration report."""
     cfg = load_config(config)
     outputs = run_v13a_checkpoint_robustness_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v3-3-failure-path-search")
+def run_v3_3_failure_path_search(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+    synthetic: bool = typer.Option(
+        False,
+        "--synthetic/--real",
+        help="Force the synthetic fitness path (useful when the trade cache is missing).",
+    ),
+) -> None:
+    """v3.3 ACO+GA+SA meta-search over the v1.2s3 long risk-off stack (research only)."""
+    cfg = load_config(config)
+    outputs = run_v3_3_failure_path_search_from_features(cfg, use_synthetic_fitness=synthetic)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v3-5-failure-risk-layer-bridge")
+def run_v3_5_failure_risk_layer_bridge(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """v3.5 failure risk layer bridge — F0..F5 × B0..B3 over the current long stack (research only)."""
+    cfg = load_config(config)
+    outputs = run_v3_5_failure_risk_layer_bridge_from_features(cfg)
     for name, path in outputs.items():
         typer.echo(f"{name}: {path}")
 
@@ -952,6 +997,17 @@ def run_v13c_cp60_false_exit(
         typer.echo(f"{name}: {path}")
 
 
+@app.command("run-v4s-failure-state-graph")
+def run_v4s_failure_state_graph(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """v4S failure state graph — 3 paths × 7 actions per failure observation (research only)."""
+    cfg = load_config(config)
+    outputs = run_v4s_failure_state_graph_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
 @app.command("run-v13d-cp60-context-protection")
 def run_v13d_cp60_context_protection(
     config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
@@ -963,6 +1019,17 @@ def run_v13d_cp60_context_protection(
         typer.echo(f"{name}: {path}")
 
 
+@app.command("run-v6s-path-c-short-validation")
+def run_v6s_path_c_short_validation(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """v6S Path C short validation — discipline-grade test of the v4S survivor (research only)."""
+    cfg = load_config(config)
+    outputs = run_v6s_path_c_short_validation_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
 @app.command("run-v13e-cp60-beta-protection-stability")
 def run_v13e_cp60_beta_protection_stability(
     config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
@@ -970,6 +1037,17 @@ def run_v13e_cp60_beta_protection_stability(
     """CP60 beta-high protection stability audit."""
     cfg = load_config(config)
     outputs = run_v13e_cp60_beta_protection_stability_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v7s-short-alpha")
+def run_v7s_short_alpha(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """v7S Short Alpha Exploration — orthogonal lane, Direction E only this commit (research only)."""
+    cfg = load_config(config)
+    outputs = run_v7s_short_alpha_from_features(cfg)
     for name, path in outputs.items():
         typer.echo(f"{name}: {path}")
 
@@ -1174,6 +1252,17 @@ def run_v32_failure_state_atlas_cmd(
     """v3.2 failure-state atlas with long-book action labels."""
     cfg = load_config(config)
     outputs = run_v32_failure_state_atlas_from_features(cfg)
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-failure-overlay-shadow")
+def run_failure_overlay_shadow(
+    config: Path = typer.Option(Path("configs/v0_3.yaml"), help="Path to v0.3 base config."),
+) -> None:
+    """F3 / F5 live shadow recorder — idempotent re-run; updates ledger + daily + status (research only)."""
+    cfg = load_config(config)
+    outputs = run_failure_overlay_shadow_from_features(cfg)
     for name, path in outputs.items():
         typer.echo(f"{name}: {path}")
 

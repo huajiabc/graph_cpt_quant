@@ -107,6 +107,34 @@ from pressure_graph.reports.v23_forward_evaluation import write_v23_forward_eval
 from pressure_graph.reports.v30_symbol_risk_off_overlay import write_v30_symbol_risk_off_overlay
 from pressure_graph.reports.v31_failure_position_management import write_v31_failure_position_management
 from pressure_graph.reports.v32_failure_state_atlas import write_v32_failure_state_atlas
+from pressure_graph.reports.v3_3_failure_path_search import (
+    V33Config,
+    write_v3_3_failure_path_search,
+)
+from pressure_graph.reports.v3_4_true_short_sleeve import (
+    V34Config,
+    write_v3_4_true_short_sleeve,
+)
+from pressure_graph.reports.v3_5_failure_risk_layer_bridge import (
+    V35Config,
+    write_v3_5_failure_risk_layer_bridge,
+)
+from pressure_graph.reports.v4s_failure_state_graph import (
+    V4SConfig,
+    write_v4s_failure_state_graph,
+)
+from pressure_graph.reports.v6s_path_c_short_validation import (
+    V6SConfig,
+    write_v6s_path_c_short_validation,
+)
+from pressure_graph.reports.v7s_short_alpha import (
+    V7SConfig,
+    write_v7s_short_alpha,
+)
+from pressure_graph.reports.failure_overlay_shadow import (
+    ShadowConfig,
+    write_failure_overlay_shadow,
+)
 from pressure_graph.paper_live import (
     write_v05_paper_live,
     write_v06a3_paper_live,
@@ -810,6 +838,110 @@ def run_v12s3_current_stack_risk_off_from_features(
     instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
     return write_v12s3_current_stack_risk_off(
         features_path, instruments, config, stack_config or CurrentStackConfig()
+    )
+
+
+def run_v3_4_true_short_sleeve_from_features(
+    config: ExperimentConfig,
+    sleeve_config: V34Config | None = None,
+) -> dict[str, Path]:
+    """v3.4 true-short-sleeve research line (SS1A..SS3B + Fast/Swing + 3-action)."""
+    features_path = (
+        config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    )
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v3_4_true_short_sleeve(
+        features_path, instruments, config, sleeve_config or V34Config()
+    )
+
+
+def run_v3_3_failure_path_search_from_features(
+    config: ExperimentConfig,
+    v33_config: V33Config | None = None,
+    *,
+    use_synthetic_fitness: bool = False,
+) -> dict[str, Path]:
+    """v3.3 ACO + GA + SA meta-search over the v1.2s3 long risk-off stack."""
+    features_path = (
+        config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    )
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v3_3_failure_path_search(
+        features_path,
+        instruments,
+        config,
+        v33_config or V33Config(),
+        use_synthetic_fitness=use_synthetic_fitness,
+    )
+
+
+def run_v3_5_failure_risk_layer_bridge_from_features(
+    config: ExperimentConfig,
+    v35_config: V35Config | None = None,
+) -> dict[str, Path]:
+    """v3.5 Failure Risk Layer Bridge: F0..F5 × B0..B3 over the current long stack."""
+    features_path = (
+        config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    )
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v3_5_failure_risk_layer_bridge(
+        features_path, instruments, config, v35_config or V35Config()
+    )
+
+
+def run_v4s_failure_state_graph_from_features(
+    config: ExperimentConfig,
+    v4s_config: V4SConfig | None = None,
+) -> dict[str, Path]:
+    """v4S Failure State Graph: 3 paths × 7 actions atop the current long stack."""
+    features_path = (
+        config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    )
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v4s_failure_state_graph(
+        features_path, instruments, config, v4s_config or V4SConfig()
+    )
+
+
+def run_v6s_path_c_short_validation_from_features(
+    config: ExperimentConfig,
+    v6s_config: V6SConfig | None = None,
+) -> dict[str, Path]:
+    """v6S Path C Short Validation — discipline-grade test of the v4S survivor."""
+    features_path = (
+        config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    )
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v6s_path_c_short_validation(
+        features_path, instruments, config, v6s_config or V6SConfig()
+    )
+
+
+def run_v7s_short_alpha_from_features(
+    config: ExperimentConfig,
+    v7s_config: V7SConfig | None = None,
+) -> dict[str, Path]:
+    """v7S Short Alpha Exploration — orthogonal short lane (Direction E only this commit)."""
+    features_path = (
+        config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    )
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_v7s_short_alpha(
+        features_path, instruments, config, v7s_config or V7SConfig()
+    )
+
+
+def run_failure_overlay_shadow_from_features(
+    config: ExperimentConfig,
+    shadow_config: ShadowConfig | None = None,
+) -> dict[str, Path]:
+    """F3 / F5 live shadow recorder — idempotent re-run against the v0.9D cache."""
+    features_path = (
+        config.paths.data_root / "processed" / "v0_3" / "perp_pressure_features_all_eligible.parquet"
+    )
+    instruments = _read_optional_parquet(raw_path(config.paths.data_root, "bybit", "instruments"))
+    return write_failure_overlay_shadow(
+        features_path, instruments, config, shadow_config or ShadowConfig()
     )
 
 

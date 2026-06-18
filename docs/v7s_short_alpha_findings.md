@@ -1,0 +1,558 @@
+# v7S Short Alpha Exploration — findings
+
+**Status: Directions E + D + A complete + A1_imb10bp validation done.
+A1_imb10bp h24 is the strongest cell at 9/10 gates after the
+post-validation gate5 tightening — single-month concentration
+(2025-10 = 63.7 % of total alpha) disqualifies it under the closure
+doc's reopen §1. NO promote-tier short candidate emerged from v7S.**
+
+Headline:
+
+- **A1_imb10bp h24**: N=56, gross +1.49 %, net20 +1.18 %, net30 +0.98 %
+  (cost-robust), win 75 %, hit_down_3pct 48.2 %, squeeze 8.9 %,
+  max_symbol_share 14.2 %. **9/10 gates pass** — fails only the
+  tightened gate5 (best_month_share = 63.7 % > 35 %). Bootstrap 95 % CI
+  on mean_net20 = `[-0.40 %, +2.52 %]` — straddles zero, P(>0) = 93 %.
+  Walk-forward over disjoint thirds: bucket 0 mean_net20 = -1.19 %
+  (negative), buckets 1+2 = +2.75 % / +2.01 %. **Verdict = no_value
+  on gate5 alone; non-stationary signal that emerged in 2025-Q4.**
+- A1 canonical (impulse ≤ -0.15): 8/10 gates fail — gate5 + gate7.
+- A0 control (no filter): -41 to -205 bps gross — confirms the filter,
+  not bar selection, supplies what alpha there is.
+- Direction E: all candidates `no_value` (closure doc reconfirmed).
+- Direction D: all 30 cells `no_value` (pair hedging HURTS naked alpha
+  in this universe).
+
+### gate5 methodology correction
+
+The first cut of `_evaluate_gates` implemented gate5 as
+`month_capped_net > 0`, which was a softer test than the closure
+doc's reopen §1 wording ("no single month contributes ≥ 35 % of the
+alpha"). A1_imb10bp h24 had month_capped_net = +0.40 (positive) but
+best_month_share = 63.7 % — a clear violation of §1's intent. The
+walk-forward validation (`scripts/v7s_a1_validation.py`) surfaced the
+non-stationarity, which triggered tightening gate5 to require BOTH
+`month_capped_net > 0` AND `best_month_share ≤ 0.35`. Under the
+tightened gate5, A1_imb10bp h24 correctly verdicts `no_value`.
+
+This correction is a real research finding in itself: any future
+short-alpha gate evaluator must include a best-month-share check, or
+the headline cell will look promotable when it's actually
+single-regime concentrated.
+
+> Lane opened per the docx mandate to explore short alpha orthogonal to
+> the closed v12s / v3.4 / v4S / v6S motif thread. The closure doc
+> (`docs/short_research_closure.md`) prohibited iterating on failed
+> motifs; v7S is the orthogonal new lane.
+
+## Direction inventory and status
+
+| Direction | Question | Data needed | Status |
+|-----------|----------|-------------|--------|
+| **A** Cross-exchange lag | Binance/OKX sell impulse → Bybit lag → short | Binance UM event orderflow + Bybit features | **Run complete — A1_h24 8/10 gates** |
+| **B** Liquidation continuation | Long-liquidation spike → failed reclaim | Liquidation tape | Deferred (no source) |
+| **C** Crowded unwind v2 | funding+OI high + taker-buy exhaustion + CVD divergence | aggTrades CVD | Stubbed |
+| **D** Relative-value pair | overextended beta vs leader → mean revert | Multi-symbol features | **Run complete — `no_value`** |
+| **E** CIC-failure confirmed (strict) | v4S Path A + beta_high gone + sell flow confirms | Local CIC + v11 orderflow_history | **Run complete — `no_value`** |
+
+## Direction D — relative-value pair (Phase 1 done)
+
+### Spec implemented (per v7s docx expanded guide)
+
+Five candidates × three fixed holding horizons × two confirmation modes
+(with vs without reclaim_failure gate) = 30 cells per stream.
+
+| Candidate | Long leg | Cost legs (round-trip) |
+|-----------|----------|------------------------|
+| D0_naked_short | (none) | 1 |
+| D1_pair_btc | BTC | 2 |
+| D2_pair_eth | ETH | 2 |
+| D3_pair_dynamic_leader | argmax 24h-ret of pool {BTC, ETH, SOL, BNB} | 2 |
+| D4_pair_basket | mean(BTC, ETH, SOL) | 4 |
+
+Holding horizons: h4 (16 bars), h12 (48 bars), h24 (96 bars). Each
+horizon exits at the fixed bar's close (no intra-trade TP/SL).
+
+`_nc` suffix denotes the no-confirmation ablation (reclaim_failure gate
+bypassed) used to test docx §核心对照 item 7.
+
+Entry chain: (1) symbol's `ret_4h_percentile ≥ 95` somewhere in 4h
+lookback. (2) BTC's `ret_4h ≤ -0.5 %` at break bar. (3) (when enabled)
+symbol's close ≥ 1.5 % below the lookback's high.
+
+### Run summary (A100, top-30 universe, 76 beta candidates)
+
+Numbers below are mean_net20 at 20 bps focal cost; n_legs-aware cost
+charged per row.
+
+| Candidate | h4 | h12 | h24 | h24 win | h24 verdict |
+|-----------|----|------|------|---------|-------------|
+| **D0_naked_short** | -0.30 % | -0.24 % | **+0.13 %** | 55.0 % | no_value (gate2,5,10) |
+| **D0_naked_short_nc** | -0.29 % | -0.20 % | **+0.18 %** | 55.5 % | no_value (gate2,5,10) |
+| D1_pair_btc | -0.76 % | -0.75 % | -0.74 % | 46.7 % | no_value |
+| D1_pair_btc_nc | -0.77 % | -0.77 % | -0.76 % | 46.8 % | no_value |
+| D2_pair_eth | -0.83 % | -0.78 % | -0.81 % | 45.2 % | no_value |
+| D2_pair_eth_nc | -0.86 % | -0.86 % | -0.92 % | 43.8 % | no_value |
+| D3_pair_dynamic_leader | -0.79 % | -0.73 % | -0.81 % | 43.8 % | no_value |
+| D3_pair_dynamic_leader_nc | -0.80 % | -0.76 % | -0.84 % | 43.6 % | no_value |
+| D4_pair_basket | -1.63 % | -1.60 % | -1.66 % | 32.4 % | no_value |
+| D4_pair_basket_nc | -1.64 % | -1.64 % | -1.71 % | 31.5 % | no_value |
+
+Sample sizes: with-confirmation candidates ≈ 5325 trades/horizon;
+no-confirmation ≈ 6649/horizon (≈25 % more events without the
+reclaim_failure gate).
+
+### Key findings
+
+1. **The relative-value pair hypothesis is empirically refuted on this
+   universe.** Every pair candidate (D1/D2/D3/D4) has WORSE gross AND
+   worse net than the naked baseline (D0). Hedging with BTC/ETH/SOL or
+   the 3-symbol basket subtracted alpha. The user-docx hypothesis was
+   that hedging would protect against "全市场继续上冲导致裸空被打爆";
+   in this data that risk is sufficiently rare that the hedge cost +
+   hedge correlation with the beta wipes out the protection benefit.
+
+2. **The reclaim_failure gate adds no meaningful edge.** Comparing
+   with-confirmation vs no-confirmation cells:
+   - D0 h24: +13 bps → +18 bps (no_conf is slightly better)
+   - D1 h24: -74 bps → -76 bps (~same)
+   - D2 h24: -81 bps → -92 bps (no_conf slightly worse)
+   The gate drops 25 % of the population for zero net20 improvement.
+   The alpha (such as it is) lives in the overextension +
+   leader_weakening combo, not in the breakdown confirmation.
+
+3. **Naked beta short of overextended names at 24h hold is the only
+   row with positive net20** at the 20 bp focal — but cost-fragile.
+   - D0_naked_short_nc h24: gross +0.50 %, net20 +0.18 %, win 55.5 %.
+   - At 30 bp net = -0.04 % (gate2 fails).
+   - month_cap fails too (one month likely dominates).
+
+4. **Basket hedge (D4) is catastrophic** at -1.66 % net20 because the
+   4-leg cost (8 × 20 bp = 1.6 %) dominates any signal. The basket arm
+   exists only because the docx §核心对照 item 4 called for it; it
+   verifies it does not work here.
+
+5. **Win rates flip near 50 % at h24.** D0 sits at 55 %, all pairs
+   sit at 43-47 %. The base rate from overextended-beta-short is
+   marginally positive but well below the cost-breakeven level.
+
+### Verdict
+
+Direction D verdict: `no_value` on all 30 cells.
+
+Direction D's closest-to-promote cell is `D0_naked_short_nc h24`
+(7 of 10 gates pass), and that's a stripped-down NAKED short with
+NO confirmation gate — the exact opposite of what the docx structurally
+proposed. The expanded pair scaffolding tested in this commit is the
+right place to STOP iterating, not iterate.
+
+## Direction A — cross-exchange downside lead-lag short
+
+### Spec implemented
+
+Three candidates × three fixed holding horizons = 9 cells per stream.
+A3 (Hyperliquid lag) is deferred until a Hyperliquid tape lands.
+
+| Candidate | Source-venue gate | Target-venue gate |
+|-----------|-------------------|-------------------|
+| A0_no_filter | (none — control) | (none — fires whenever an event row exists) |
+| A1_binance_sell_impulse_bybit_lag | shock_bar Binance `buy_sell_imbalance ≤ -0.15` | Bybit close drop ≤ 1.5 % over 1h lookback |
+| A2_binance_breakdown_bybit_failed_reclaim | pullback + reclaim Binance imbalance both ≤ -0.05 | Bybit recovered < 0.5 % from window low |
+
+Event source: `data/orderflow_history/binance_um/cic_event_orderflow.parquet`
+(574 events; Bybit-anchored signal_times with Binance UM imbalance reads
+per the v11 PRE_ENTRY window contract).
+
+Execution: single-leg short on Bybit (n_legs=1, same cost model as
+Direction E and Direction D's naked baseline).
+
+### Run summary (A100, top-30 universe)
+
+| Candidate | Horizon | N | mean_gross | mean_net20 | mean_net30 | win | verdict | failures |
+|-----------|---------|---|-----------|-----------|-----------|-----|---------|----------|
+| A0_no_filter | h4 | 476 | -1.66 % | -2.05 % | -2.25 % | 21.8 % | no_value | 1,2,3,5,6,8,9 |
+| A0_no_filter | h12 | 476 | -1.40 % | -1.76 % | -1.96 % | 30.0 % | no_value | 1,2,3,5,6,8,9 |
+| A0_no_filter | h24 | 476 | -0.41 % | -0.72 % | -0.92 % | 48.7 % | no_value | 1,2,3,5,9 |
+| A1 | h4 | 34 | +0.13 % | -0.25 % | -0.45 % | 50.0 % | no_value | 1,2,5,6,9,10 |
+| A1 | h12 | 34 | -0.51 % | -0.87 % | -1.07 % | 47.1 % | no_value | 1,2,5,6,7,9 |
+| **A1** | **h24** | **34** | **+0.93 %** | **+0.61 %** | **+0.41 %** | **73.5 %** | **no_value (gate5, gate7)** | **5, 7** |
+| A2 | h4-h24 | 3 | -3 % to -5 % | -3 % to -5 % | -3 % to -5 % | 0 % | no_value | all |
+
+### A1_h24 detailed read (canonical 1.5 % lag)
+
+- N=34 events (25 winners, 9 losers).
+- max_symbol_share = 35.4 % — fails gate7 (≤ 35 %) by 0.4 percentage points.
+- leave_worst_symbol_net = +0.587 (positive).
+- net30 = +0.41 % (cost-robust under the 30 bp stress).
+- short_beats_no_long via gate9 — passes.
+- A0 control (no filter) loses 41 to 205 bps gross at all horizons.
+  The filter — Binance sell impulse + Bybit lag — is what supplies the
+  edge; not the bar selection itself.
+
+### A1 threshold sweep (h24 only — h4/h12 stay no_value)
+
+The canonical 1.5 % threshold was followed by a sweep over four lag
+thresholds to test whether the alpha generalizes:
+
+| Variant | Bybit lag ≤ | N | gross | net20 | net30 | win | failures |
+|---------|-------------|---|-------|-------|-------|-----|----------|
+| A1_lag10bp | 1.0 % | 28 | +0.14 % | -0.18 % | -0.38 % | 67.9 % | 1,2,3,5,7,9 |
+| A1 (1.5 %) | 1.5 % | 34 | +0.93 % | +0.61 % | +0.41 % | 73.5 % | 5,7 |
+| A1_lag20bp | 2.0 % | 35 | +0.93 % | +0.61 % | +0.41 % | 74.3 % | 3,5,7 |
+| **A1_lag25bp** | **2.5 %** | **37** | **+1.04 %** | **+0.72 %** | **+0.52 %** | **75.7 %** | **3, 5** |
+
+A1_lag25bp passes 8 of 10 gates (gate7 now clears at 33.x % symbol
+share, just below the 35 % bar) and net30 stays positive at +0.52 %.
+The remaining failures are gate3 (clean_short_hit) and gate5 (month_cap).
+
+### A1 Binance-impulse sweep (h24) — THE finding
+
+A second sweep over Binance shock_bar buy_sell_imbalance thresholds
+revealed that LOOSER is better. The canonical -0.15 was too strict:
+
+| Variant | Binance imbalance ≤ | N | gross | net20 | net30 | win | hit_3pct | sym_share | month_cap | failures |
+|---------|---------------------|---|-------|-------|-------|-----|---------|-----------|-----------|----------|
+| **A1_imb10bp** | **-0.10** | **56** | **+1.49 %** | **+1.18 %** | **+0.98 %** | **75.0 %** | **48.2 %** | **14.2 %** | **+0.40** | **NONE — PROMOTE** |
+| A1 (canonical) | -0.15 | 34 | +0.93 % | +0.61 % | +0.41 % | 73.5 % | 35.3 % | 35.4 % | -0.16 | 5, 7 |
+| A1_imb20bp | -0.20 | 20 | -0.34 % | -0.66 % | -0.86 % | 75.0 % | 15.0 % | 58.5 % | -0.13 | 1,2,3,5,7,9 |
+| A1_imb25bp | -0.25 | 11 | -3.34 % | -3.66 % | -3.86 % | 54.5 % | 27.3 % | 75.9 % | -0.40 | 1,2,3,5,7,8,9 |
+
+**Key reads:**
+
+- A1_imb10bp passes all ten gates — the first v7S `promote` cell.
+- Going stricter on Binance impulse REDUCES both N and quality. Above
+  -0.20 the symbol concentration explodes (58 % to 76 %) and the
+  remaining events are dominated by edge cases that don't generalize.
+- The looser threshold's superiority is structural, not noise: hit_3pct
+  goes UP (48.2 % vs 35.3 % canonical vs 15 % at -0.20), and the
+  squeeze rate stays at 8.9 % (well below the 20 % bar).
+- net30 +0.98 % is cost-robust under the closure doc's stress level.
+
+The interpretation: extreme Binance sell impulses likely correspond
+to events where Bybit has already moved (no lag to exploit), while
+moderate Binance sell impulses are exactly the regime where the
+cross-exchange information has time to propagate. Counter-intuitive,
+but defensible mechanically.
+
+### Key findings
+
+1. **Cross-exchange downside lead-lag IS a real signal in this data.**
+   Binance UM shock-bar buy_sell_imbalance ≤ -0.15 combined with Bybit
+   close still ≤ 1.5 % drop in the same 1 h gives +93 bps gross / 73.5 %
+   hit rate at 24 h hold. A0 (no filter) loses; A1 (with filter) wins.
+2. **Lead-lag persistence shows on the 24 h horizon, not earlier.** A1 at
+   h4 is gross +13 bps, win 50 %; the edge only materialises in the slower
+   horizon. Consistent with "information propagation lag" framing.
+3. **A2's stricter gate (sustained breakdown + failed reclaim) is too
+   tight.** N=3 — the gate stack doesn't have a meaningful sample.
+4. **The 574 events in cic_event_orderflow are CIC-anchored, not
+   continuous time.** That's why N=34 even at A1's modest gates. A
+   follow-up that builds continuous Binance CVD aggregates from
+   aggTrades archives would 100-1000× the sample size; that's the
+   right next step for Direction A.
+
+### Verdict
+
+Direction A verdict: **A1_imb10bp h24 = `no_value` (tightened gate5
+post-validation)**. The signal is real but non-stationary — a single
+month (2025-10) carries 64 % of the total alpha. No v7S candidate
+clears the closure doc's reopen criteria.
+
+### Validation results (from `scripts/v7s_a1_validation.py`)
+
+Walk-forward over three disjoint thirds (by signal_time order):
+
+| bucket | window | N | mean_net20 | win_rate |
+|---|---|---|---|---|
+| 0 | 2025-07-14 → 2025-10-11 | 19 | **-1.19 %** | 68.4 % |
+| 1 | 2025-10-11 → 2026-01-13 | 19 | +2.75 % | 84.2 % |
+| 2 | 2026-01-14 → 2026-06-02 | 18 | +2.01 % | 72.2 % |
+
+Bucket 0 LOSES money — the alpha emerged in 2025-Q4 and persisted
+through Q1 2026. Pre-Q4 the same gate combination doesn't pay.
+
+Bootstrap (5000 resamples, seed = 20260617):
+
+- N = 56, mean net20 = +1.18 %
+- 95 % CI: `[-0.40 %, +2.52 %]` — straddles zero.
+- P(mean > 0) = 0.930.
+
+CI overlap with zero means the +1.18 % isn't significant at 95 %
+under bootstrap. With N=56, the standard error is large enough that
+the observed mean could be a sampling artefact.
+
+Per-month breakdown (9 months, 4 positive / 5 negative or flat):
+
+| month | N | sum_net20 | win |
+|---|---|---|---|
+| 2025-07 | 12 | **-0.174** | 75.0 % |
+| 2025-09 | 3 | -0.078 | 0.0 % |
+| 2025-10 | 13 | **+0.419** | 100 % |
+| 2025-11 | 2 | -0.000 | 50.0 % |
+| 2025-12 | 3 | +0.129 | 100 % |
+| 2026-01 | 11 | +0.298 | 81.8 % |
+| 2026-03 | 3 | -0.081 | 33.3 % |
+| 2026-05 | 8 | +0.157 | 75.0 % |
+| 2026-06 | 1 | -0.011 | 0.0 % |
+
+Best month (2025-10) is **63.7 %** of total net — the closure doc's
+35 % §1 bar is broken nearly 2x.
+
+### A1 Regime Autopsy (77 docx P2 — research only, NOT an upgrade)
+
+Per-month regime profile from `scripts/v7s_a1_regime_autopsy.py`. 2025-10
+stands out on FOUR independent regime axes vs the eight other months:
+
+| month | n | mean_net20 | btc_ret_4h | btc_vol_pct | **funding_pct** | **oi_4h_pct** | **vol_z_4h** | btc_state |
+|---|---|---|---|---|---|---|---|---|
+| 2025-07 | 12 | -1.45 % | +0.59 % | 83 | 83 | 80 | 2.26 | chop |
+| 2025-09 | 3 | -2.60 % | +0.11 % | 98 | 60 | 95 | 2.06 | chop |
+| **2025-10** | **13** | **+3.23 %** | **+1.41 %** | **98.5** | **0.88** | **99.8** | **5.86** | **BTC_up** |
+| 2025-11 | 2 | -0.02 % | +0.85 % | 99.98 | 32 | 70 | 2.24 | chop |
+| 2025-12 | 3 | +4.31 % | +3.98 % | 92 | 63 | 98 | 2.23 | BTC_up |
+| 2026-01 | 11 | +2.70 % | +1.33 % | 95 | 71 | 80 | 2.39 | BTC_up |
+| 2026-03 | 3 | -2.71 % | +1.83 % | 94 | 82 | 56 | 2.25 | BTC_up |
+| 2026-05 | 8 | +1.96 % | +1.34 % | 69 | 79 | 92 | 2.38 | chop |
+| 2026-06 | 1 | -1.10 % | -1.07 % | 98 | 19 | 14 | 2.16 | chop |
+
+**The 2025-10 combo (uncrowded + extreme OI + extreme volume + BTC up)
+is structurally interpretable:** retail piles into a rally with
+volume + OI but funding hasn't caught up yet. Cross-exchange
+info-propagation lag is exactly the type of edge that would peak in
+such a regime — institutional Binance flow leads, slower venues lag.
+The cell IS a tradable regime in principle.
+
+**ex-2025-10 sample:** mean_net20 = **+0.56 %** (N=43, win 67 %).
+Still positive but cut in half from the full +1.18 %. The regime
+is NOT all of the alpha — there's residual edge.
+
+**Shuffled-regime control:**
+
+| metric | observed | control_mean | control_p95 | p_more_extreme |
+|--------|---------|--------------|-------------|----------------|
+| target_month_share (2025-10) | 0.637 | 0.228 | 0.641 | **0.053** |
+
+The 2025-10 share at 0.637 is right at the 95th percentile of
+shuffled distributions; p ≈ 0.053 is borderline-significant. The
+concentration is real but only marginally distinguishable from
+calendar noise on N=56.
+
+**Promotion gate per 77 docx P2:**
+
+- ex-2025-10 mean > 0 ✓ (`+56 bps`)
+- shuffled-regime control p < 0.05 ✗ (`p = 0.053`, borderline)
+- OOS replay on fresh months still positive — waiting (P3 harness
+  pending)
+
+Until all three pass, A1 stays in `diagnostic_only` / regime-event
+research per the 77 docx directive. Do NOT brand any follow-up as
+"A1 Strategy Upgrade".
+
+### Next steps from here
+
+1. **Regime detection.** The 2025-10 dominance suggests a Q4 cross-
+   exchange info-flow regime. A regime gate (e.g. BTC realised vol
+   high + funding crowded) on top of A1 could isolate the productive
+   regime and skip the loser months. That's the natural next R&D step.
+2. **Continuous Binance CVD backfill.** The current event base is 574
+   CIC-anchored rows. Continuous CVD aggregates from raw aggTrades
+   archives would multiply the sample by ~100×, which would also
+   shrink the bootstrap CI and clarify whether the signal is truly
+   stationary or a single-quarter regime artefact.
+3. **OOS replay on freshly-arriving months.** Schedule the once-script
+   on a rolling basis and stamp each new month's contribution against
+   the A1_imb10bp h24 gate. After 6 fresh positive months the gate5
+   tightening would clear mechanically.
+4. **STOP iterating thresholds on the same 574-event tape.** The
+   threshold sweep has converged: -0.10/-0.15/-0.20/-0.25 × 1.0/1.5/
+   2.0/2.5 % covers the productive corner. Further tuning here is
+   overfitting.
+
+## Direction D2 — CVD-confirmed relative-value pair (77.docx §8)
+
+### First batch (Sep-Nov 2025 only, partial CVD coverage)
+
+Gates: beta_overextended (ret_4h_pct ≥ 95) + relative_overperf (beta -
+btc_ret_4h ≥ 2 %) + beta_failed_followthrough (close ≥ 1.5 % below
+lookback high) + **CVD divergence** (beta's buy_sell_imbalance ≤ -0.05
+AND hedge's buy_sell_imbalance ≥ -0.05).
+
+Two candidates × three horizons. Hedge symbols loaded continuously
+from `binance_continuous_cvd` shards.
+
+| Candidate | Horizon | N | mean_gross | mean_net20 | mean_net30 | win | verdict |
+|---|---|---|---|---|---|---|---|
+| D2_btc_cvd_pair | h4 | 66 | +1.6 bps | -78 bps | -118 bps | 44 % | no_value |
+| D2_btc_cvd_pair | h12 | 66 | -22 bps | -102 bps | -142 bps | 47 % | no_value |
+| D2_btc_cvd_pair | h24 | 66 | +32 bps | -48 bps | -88 bps | 59 % | no_value |
+| D2_eth_cvd_pair | h4 | 30 | +43 bps | -37 bps | -77 bps | 33 % | no_value |
+| D2_eth_cvd_pair | h12 | 30 | +140 bps | +60 bps | +20 bps | 40 % | no_value |
+| **D2_eth_cvd_pair** | **h24** | **30** | **+349 bps** | **+269 bps** | **+229 bps** | **63 %** | **no_value** |
+
+### gate_checks verdict on D2_eth h24
+
+- bootstrap 95 % CI = `[+0.96 %, +4.38 %]`, **p(mean>0) = 0.999** —
+  signal is statistically REAL on this sample.
+- BUT: best_month_share = **113 %**. The split:
+  - 2025-09 (N=14): -0.107 sum, mean -0.76 %
+  - 2025-10 (N=16): **+0.913 sum**, mean +5.71 %
+  - 2025-11: ETH backfill incomplete — no D2_eth rows yet
+- walk_forward buckets: -1.16 % / +3.02 % / +6.20 % (bucket 0 negative)
+- best_symbol_share = 42 % (one beta over the 35 % bar)
+- Verdict: `no_value` on 5 of 8 distribution gates.
+
+### Read
+
+D2_eth_cvd_pair h24 reproduces A1's exact pattern: real flow-divergence
+alpha in 2025-Q4, but the same single month (2025-10) carries it.
+This is the SECOND independent signal axis (cross-exchange flow
+asymmetry, with CVD-confirmed beta-vs-leader pair) that lights up in
+that one regime and not before.
+
+The reproduction across two structurally distinct signal builds is
+itself evidence that **2025-10's regime was a real cross-exchange
+info-propagation event** (uncrowded funding + extreme volume + OI
+surge + BTC up), not a per-strategy fitting artefact.
+
+D2_btc_cvd_pair does NOT pay — same conclusion as the old D1_pair_btc:
+beta and BTC are too correlated, the hedge cost wipes the signal.
+Only the ETH-hedge variant produces meaningful flow asymmetry.
+
+### D2 v2 rerun (6 months of data: 2025-07 → 2025-10) — REFUTED
+
+Backward window (2025-06-01 → 2025-09-14, 848 tasks) completed
+locally with proxy. After re-running D2 on the 6-month sample:
+
+| candidate | h24 N | net20 | bootstrap CI | p(>0) | walk-forward min | verdict |
+|---|---|---|---|---|---|---|
+| D2_eth h24 (3-mo, prior) | 30 | +269 bps | [+0.96, +4.38] | 0.999 | -1.16% | no_value |
+| **D2_eth h24 (6-mo)** | **102** | **-9 bps** | **[-1.62, +1.25]** | **0.465** | **-2.40%** | **no_value** |
+| D2_eth h12 (6-mo) | 102 | -36 bps | [-1.33, +0.56] | 0.237 | -0.93% | no_value |
+| **D2_eth h4 (6-mo)** | **102** | **-51 bps** | **[-0.95, -0.01]** | **0.025** | **-1.16%** | **no_value** |
+| D2_btc h24 (6-mo) | 66 | -48 bps | [-2.91, +1.88] | 0.355 | -5.11% | no_value |
+
+Per-month breakdown for D2_eth h24:
+
+| month | N | sum_net20 | mean_net20 |
+|---|---|---|---|
+| 2025-07 | 43 | -0.015 | -0.04 % |
+| 2025-08 | 13 | +0.246 | +1.89 % |
+| 2025-09 | 30 | **-1.237** | **-4.12 %** |
+| 2025-10 | 16 | +0.913 | +5.71 % |
+
+**The story.** With 3 months of data the headline +269 bps net20 looked
+exceptional. With 6 months it's -9 bps and the bootstrap CI straddles
+zero. The added 2025-09 (when the ETH backfill finally caught up to
+include the full month) carried -1.24 sum / -4.12 % mean — large
+enough to fully neutralise the 2025-10 contribution.
+
+D2_eth h4 net20 = -0.51 % over N=102 with bootstrap CI fully
+NEGATIVE — at the 4 h horizon, D2_eth loses money with 97.5 %
+confidence. That's the cleanest possible falsification.
+
+**The 2025-10 alpha was real but regime-bound, just like A1.** Both
+candidates light up in 2025-10 (uncrowded funding + extreme volume +
+OI surge + BTC up) and lose money in 2025-09 (which the gate also
+fires in but unfavourably). The lesson is identical to gate5: any
+candidate evaluated on a regime-imbalanced sample LOOKS promotable;
+proper distribution checks (best_month_share + walk_forward +
+bootstrap) catch it.
+
+### Verdict
+
+D2 (both candidates × all horizons) verdict: `no_value`. Same as the
+old D, but now with a different gate structure that proved
+the CVD-divergence framing didn't survive contact with a broader
+sample.
+
+The forward window backfill (2025-11-16 → 2026-06-01, 1584 tasks)
+caught Binance's IncompleteRead throttling twice. Not strictly needed
+— D2_eth h4 already falsifies the candidate at p = 0.025. Future
+work would re-run forward when the proxy / retry layer is hardened
+in `orderflow_history.download_aggtrades_day` to retry IncompleteRead
+(currently only catches URLError / OSError / HTTPError).
+
+## Direction E — strict CIC-failure-confirmed (previously closed)
+
+Recap from prior commit `97fb697`:
+
+| Candidate | Execution | N | mean_net20 | Verdict |
+|-----------|-----------|---|-----------|---------|
+| E1_cic_break_entry_strict | fast | 11 | -1.74 % | no_value |
+| E1_cic_break_entry_strict | swing | 11 | -2.92 % | no_value |
+| E2_cic_break_pullback_strict | fast | 1 | +1.70 % | no_value (N=1) |
+| E2_cic_break_pullback_strict | swing | 1 | +2.17 % | no_value (N=1) |
+
+CIC longs recovered in 10/11 events (90.9 %). Strict CIC-failure
+confirmed short does not pay.
+
+## Ten-gate acceptance reference
+
+| # | Gate | Pass condition |
+|---|------|----------------|
+| 1 | net20+slip > 0 | `mean_net20 > 0` |
+| 2 | net30 holds | `mean_net30 > 0` AND `mean_net30 ≥ 0.5 × mean_net20` |
+| 3 | clean_short_hit lifts | `hit_down_3pct ≥ 0.35` |
+| 4 | squeeze controllable | `short_squeeze_before_hit ≤ 0.20` |
+| 5 | month_cap35 still positive | `month_capped_net > 0` |
+| 6 | leave-one-month not collapsing | `leave_worst_net > 0` |
+| 7 | max_symbol_share < 35 % | `max_symbol_share ≤ 0.35` |
+| 8 | matched random strictly worse | `candidate_mean > random_mean` |
+| 9 | short > no_long > 0 | `mean_C_short > mean_B_no_long > 0` |
+| 10 | hedge complementary | `hedge_corr ≤ -0.30` OR `short_in_long_worst_month > 0` |
+
+Verdict logic:
+
+- `promote` — all 10 gates pass.
+- `risk_off_only` — gates 1-8 pass; exactly one of 9/10 fails.
+- `no_value` — any of gates 1-8 fail (or both 9 and 10 fail).
+
+## Notes for the next commit
+
+1. **Direction A is the next priority** — per memory note
+   `v11-orderflow-burst-ranking`, Binance UM + Bybit linear aggTrades
+   are both on the A100 box. The lead-lag detector is the cleanest
+   data-ready next direction since it requires aligning two tapes by
+   timestamp, not building new gates.
+2. **Direction E remains data-blocked on sell-flow.** Re-backfilling
+   orderflow_history at breakdown bars (instead of CIC entry bars)
+   would unblock the strict gate; deferred until Direction A lands.
+3. **Direction C v2** needs CVD divergence labels not currently
+   exported — spec these before wiring.
+4. **Direction D scaffolding stays in tree** as a negative result — do
+   not re-tune hedge ratios or add new horizons here without first
+   producing a hypothesis for why the leader-beta correlation in this
+   universe would differ.
+
+## Reproduction
+
+A100 (production):
+
+```bash
+ssh -L 12222:10.106.200.247:2222 root@10.115.7.6 -p 25711
+ssh root@localhost -p 12222            # second terminal
+cd /opt/data/private/Wangjb/graph
+source /opt/conda/etc/profile.d/conda.sh && conda activate quant
+PYTHONPATH=src python scripts/v7s_short_alpha_once.py --config configs/v0_3.yaml
+# Direction E orderflow ablation:
+PYTHONPATH=src python scripts/v7s_short_alpha_once.py --config configs/v0_3.yaml \
+  --sell-flow-fail-open --report-root reports/v7s_short_alpha_fail_open
+# Direction E gate cascade audit:
+PYTHONPATH=src python scripts/v7s_direction_e_gate_cascade.py
+```
+
+Local (without features): writes empty CSV stubs and
+`candidate_notes.md = "No data"`. Useful only for harness sanity:
+
+```bash
+PYTHONPATH=src python -m pytest tests/test_v7s_short_alpha.py -q
+```
+
+## Outputs
+
+Production outputs live under `reports/v7s_short_alpha/<direction>/`
+(gitignored locally; pulled from A100 per session). Each direction
+emits the docx-mandated ten CSVs + `candidate_notes.md` (verdict
+narrative). Direction E additionally emits
+`gate_cascade_counts.csv` via the diagnostic script for visibility into
+which gate filters the population.
