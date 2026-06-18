@@ -1317,6 +1317,57 @@ def run_sell_pressure_propagation_cross_venue(
         typer.echo(f"{name}: {path}")
 
 
+@app.command("run-propagation-risk-overlay")
+def run_propagation_risk_overlay(
+    graph_nodes: Path = typer.Option(
+        Path("reports/sell_pressure_propagation_phase3_multimonth/graph_nodes.json"),
+        help="Phase 3 graph_nodes.json artefact.",
+    ),
+    binance_root: Path = typer.Option(
+        Path("data/orderflow_history/binance_um/continuous"),
+        help="Binance UM continuous-CVD root (consumed when a node names binance_um as source).",
+    ),
+    bybit_root: Path = typer.Option(
+        Path("data/orderflow_history/bybit_linear/continuous"),
+        help="Bybit linear continuous-CVD root (the Phase 3 primary node names bybit as source).",
+    ),
+    report_root: Path = typer.Option(
+        Path("reports/propagation_risk_overlay"),
+        help="Output directory for the overlay log + summary.",
+    ),
+    bar_size_minutes: int = typer.Option(5, help="Bar size; must match the CVD writer output."),
+    treat_as_always_long: bool = typer.Option(
+        True,
+        help="When True, emit one flag per source event regardless of held positions — useful for footprint analysis.",
+    ),
+    flag_lookforward_bars: int = typer.Option(
+        6,
+        help="Flag stays active for this many bars after each source event (only relevant when treat_as_always_long is False).",
+    ),
+) -> None:
+    """Consume the Phase 3 graph node and write a per-flag risk log for the long stack."""
+    from pressure_graph.reports.propagation_risk_overlay import (
+        PropagationOverlayConfig,
+        run_overlay_from_disk,
+    )
+    from pressure_graph.reports.sell_pressure_propagation import PropagationConfig
+
+    overlay_cfg = PropagationOverlayConfig(
+        flag_lookforward_bars=flag_lookforward_bars,
+        treat_as_always_long=treat_as_always_long,
+        cfg=PropagationConfig(bar_size_minutes=bar_size_minutes),
+    )
+    outputs = run_overlay_from_disk(
+        graph_nodes_path=graph_nodes,
+        cvd_roots={"bybit": bybit_root, "binance_um": binance_root},
+        bar_size_minutes=bar_size_minutes,
+        report_root=report_root,
+        overlay_cfg=overlay_cfg,
+    )
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
 @app.command("run-sell-pressure-propagation-phase3")
 def run_sell_pressure_propagation_phase3(
     binance_root: Path = typer.Option(
