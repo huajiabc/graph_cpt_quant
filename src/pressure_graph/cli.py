@@ -85,6 +85,14 @@ from pressure_graph.pipeline import (
     run_v22f_meta_router_synthesis,
     run_v22g_router_explainability,
     run_v23_forward_evaluation,
+    run_v24_long_stack_promotion_audit,
+    run_v25_execution_realism_audit,
+    run_v26_risk_envelope_finalization,
+    run_v63_token_pool_dex_attention,
+    run_v64_onchain_attention_score,
+    run_v65_token_pool_coverage_expansion,
+    run_v66_token_attention_attribution,
+    run_v67_token_attention_forward_context,
     run_v30_symbol_risk_off_overlay_from_features,
     run_v31_failure_position_management_from_features,
     run_v32_failure_state_atlas_from_features,
@@ -1219,6 +1227,70 @@ def run_v22g_router_explainability_cmd() -> None:
 def run_v23_forward_evaluation_cmd() -> None:
     """v2.3 forward evaluation and decision ledger over current paper-live shadows."""
     outputs = run_v23_forward_evaluation()
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v24-long-stack-promotion-audit")
+def run_v24_long_stack_promotion_audit_cmd() -> None:
+    """v2.4 long stack promotion audit over forward ledgers."""
+    outputs = run_v24_long_stack_promotion_audit()
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v25-execution-realism-audit")
+def run_v25_execution_realism_audit_cmd() -> None:
+    """v2.5 execution realism audit for the current long stack."""
+    outputs = run_v25_execution_realism_audit()
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v26-risk-envelope-finalization")
+def run_v26_risk_envelope_finalization_cmd() -> None:
+    """v2.6 draft risk envelope and stop-condition finalization."""
+    outputs = run_v26_risk_envelope_finalization()
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v63-token-pool-dex-attention")
+def run_v63_token_pool_dex_attention_cmd() -> None:
+    """v6.3 token/pool-level DEX attention mapping and CEX propagation audit."""
+    outputs = run_v63_token_pool_dex_attention()
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v64-onchain-attention-score")
+def run_v64_onchain_attention_score_cmd() -> None:
+    """v6.4 composite market/token on-chain attention score diagnostics."""
+    outputs = run_v64_onchain_attention_score()
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v65-token-pool-coverage-expansion")
+def run_v65_token_pool_coverage_expansion_cmd() -> None:
+    """v6.5 trade-weighted token/pool mapping and event-overlap coverage sprint."""
+    outputs = run_v65_token_pool_coverage_expansion()
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v66-token-attention-attribution")
+def run_v66_token_attention_attribution_cmd() -> None:
+    """v6.6 token/pool attention attribution with random and market-level controls."""
+    outputs = run_v66_token_attention_attribution()
+    for name, path in outputs.items():
+        typer.echo(f"{name}: {path}")
+
+
+@app.command("run-v67-token-attention-forward-context")
+def run_v67_token_attention_forward_context_cmd() -> None:
+    """v6.7 token attention forward/counterfactual context ledger."""
+    outputs = run_v67_token_attention_forward_context()
     for name, path in outputs.items():
         typer.echo(f"{name}: {path}")
 

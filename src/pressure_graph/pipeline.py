@@ -104,6 +104,14 @@ from pressure_graph.reports.v22e_negative_controls import write_v22e_negative_co
 from pressure_graph.reports.v22f_meta_router_synthesis import write_v22f_meta_router_synthesis
 from pressure_graph.reports.v22g_router_explainability import write_v22g_router_explainability
 from pressure_graph.reports.v23_forward_evaluation import write_v23_forward_evaluation
+from pressure_graph.reports.v24_long_stack_promotion_audit import write_v24_long_stack_promotion_audit
+from pressure_graph.reports.v25_execution_realism_audit import write_v25_execution_realism_audit
+from pressure_graph.reports.v26_risk_envelope_finalization import write_v26_risk_envelope_finalization
+from pressure_graph.reports.v63_token_pool_dex_attention import write_v63_token_pool_dex_attention
+from pressure_graph.reports.v64_onchain_attention_score import write_v64_onchain_attention_score
+from pressure_graph.reports.v65_token_pool_coverage_expansion import write_v65_token_pool_coverage_expansion
+from pressure_graph.reports.v66_token_attention_attribution import write_v66_token_attention_attribution
+from pressure_graph.reports.v67_token_attention_forward_context import write_v67_token_attention_forward_context
 from pressure_graph.reports.v30_symbol_risk_off_overlay import write_v30_symbol_risk_off_overlay
 from pressure_graph.reports.v31_failure_position_management import write_v31_failure_position_management
 from pressure_graph.reports.v32_failure_state_atlas import write_v32_failure_state_atlas
@@ -779,6 +787,38 @@ def run_v22g_router_explainability() -> dict[str, Path]:
 
 def run_v23_forward_evaluation() -> dict[str, Path]:
     return write_v23_forward_evaluation()
+
+
+def run_v24_long_stack_promotion_audit() -> dict[str, Path]:
+    return write_v24_long_stack_promotion_audit()
+
+
+def run_v25_execution_realism_audit() -> dict[str, Path]:
+    return write_v25_execution_realism_audit()
+
+
+def run_v26_risk_envelope_finalization() -> dict[str, Path]:
+    return write_v26_risk_envelope_finalization()
+
+
+def run_v63_token_pool_dex_attention() -> dict[str, Path]:
+    return write_v63_token_pool_dex_attention()
+
+
+def run_v64_onchain_attention_score() -> dict[str, Path]:
+    return write_v64_onchain_attention_score()
+
+
+def run_v65_token_pool_coverage_expansion() -> dict[str, Path]:
+    return write_v65_token_pool_coverage_expansion()
+
+
+def run_v66_token_attention_attribution() -> dict[str, Path]:
+    return write_v66_token_attention_attribution()
+
+
+def run_v67_token_attention_forward_context() -> dict[str, Path]:
+    return write_v67_token_attention_forward_context()
 
 
 def run_v30_symbol_risk_off_overlay_from_features(config: ExperimentConfig) -> dict[str, Path]:

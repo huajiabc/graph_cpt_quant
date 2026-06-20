@@ -1797,6 +1797,28 @@ def _write_shadow_status(
     (report_root / "portfolio_current_status.md").write_text("\n".join(lines), encoding="utf-8")
 
 
+def _token_attention_counterfactual_live(trades: pd.DataFrame) -> pd.DataFrame:
+    if trades.empty:
+        return pd.DataFrame()
+    try:
+        from pressure_graph.reports.v67_token_attention_forward_context import (
+            build_token_attention_context_for_trades,
+        )
+
+        return build_token_attention_context_for_trades(trades)
+    except Exception as exc:  # noqa: BLE001 - context logging must never break paper-live
+        return pd.DataFrame(
+            [
+                {
+                    "trade_id": "",
+                    "token_attention_context_error": str(exc),
+                    "live_action_allowed": False,
+                    "recommended_use": "forward_counterfactual_diagnostic_only",
+                }
+            ]
+        )
+
+
 def write_v07d2_outputs(
     prepared: pd.DataFrame,
     config: V07A2Config,
@@ -1828,6 +1850,7 @@ def write_v07d2_outputs(
     checkpoint_candidate_type_audit = _checkpoint_candidate_type_audit(checkpoint_ledger)
     checkpoint_protection_attribution = _checkpoint_protection_attribution_live(checkpoint_ledger)
     pre_entry_router_counterfactual = _pre_entry_router_counterfactual_live(trades)
+    token_attention_counterfactual = _token_attention_counterfactual_live(trades)
     outputs = {
         "paper_signals": report_root / "paper_signals.parquet",
         "paper_trades": report_root / "paper_trades.parquet",
@@ -1862,6 +1885,8 @@ def write_v07d2_outputs(
         "checkpoint_candidate_type_audit": report_root / "checkpoint_candidate_type_audit.csv",
         "pre_entry_router_counterfactual_live": report_root / "pre_entry_router_counterfactual_live.csv",
         "pre_entry_router_counterfactual_live_data": report_root / "pre_entry_router_counterfactual_live.parquet",
+        "token_attention_counterfactual_live": report_root / "token_attention_counterfactual_live.csv",
+        "token_attention_counterfactual_live_data": report_root / "token_attention_counterfactual_live.parquet",
         "current_status": report_root / "current_status.md",
         "candidate_status": report_root / "candidate_status.md",
         "decision_log": report_root / "decision_log.md",
@@ -1903,6 +1928,8 @@ def write_v07d2_outputs(
     checkpoint_candidate_type_audit.to_csv(outputs["checkpoint_candidate_type_audit"], index=False)
     pre_entry_router_counterfactual.to_csv(outputs["pre_entry_router_counterfactual_live"], index=False)
     write_parquet(pre_entry_router_counterfactual, outputs["pre_entry_router_counterfactual_live_data"])
+    token_attention_counterfactual.to_csv(outputs["token_attention_counterfactual_live"], index=False)
+    write_parquet(token_attention_counterfactual, outputs["token_attention_counterfactual_live_data"])
     _write_shadow_status(report_root, shadow_status, shadow_summary)
     _write_overflow_status(report_root, overflow_ledger, overflow_daily)
     _write_checkpoint_status(report_root, checkpoint_status, checkpoint_summary, slot_release)

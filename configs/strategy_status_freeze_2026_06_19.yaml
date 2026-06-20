@@ -1,0 +1,112 @@
+# Strategy status freeze as of 2026-06-19.
+# This file is a governance/decision artifact. It does not change live execution
+# by itself; live scripts must explicitly opt in before consuming it.
+
+freeze:
+  date: "2026-06-19"
+  rationale: >
+    Broad historical alpha exploration is paused. Later modules have not proven
+    a stronger forward alpha than the original CIC/P2 discovery. The project
+    should focus on forward evaluation, sample sufficiency, execution realism,
+    and demotion/promotion discipline.
+
+permissions:
+  paper_live_allowed: true
+  real_live_allowed: false
+  canary_live_allowed: false
+  new_historical_rule_mining_allowed: false
+  diagnostic_data_collection_allowed: true
+
+active_forward_benchmarks:
+  - id: S0_P2_MAX8
+    label: P2 CIC1+CIC2 max8 baseline
+    status: core_forward_baseline
+    live_action: paper_or_shadow_logging_only
+
+  - id: S3_P2_MAX8_CP60_O6
+    label: P2 max8 + CP60 + O6
+    status: conservative_managed_shadow
+    live_action: shadow_logging_only
+
+  - id: S5_P2_MAX8_PROTECT_A_CAP2_O6
+    label: P2 max8 + Protect_A cap2 + O6
+    status: research_improved_shadow
+    live_action: shadow_logging_only
+
+component_status:
+  p2_core:
+    status: active_forward_candidate
+    description: Best current basket expression of CIC-filtered MIR1.
+    promote_after_core_trades: 100
+    demote_if_core_trades_at_least: 100
+    demote_if_net20_lte: 0.0
+
+  o6_late_burst_overflow:
+    status: shadow_only
+    description: Historical additive overflow sleeve; no current forward trigger sample.
+    promote_after_overflow_trades: 30
+    stronger_review_after_overflow_trades: 50
+
+  cp60_checkpoint:
+    status: shadow_only
+    description: Weak-position pruning; improves loss control but not entry alpha.
+    promote_after_checkpoint_exits: 50
+    stronger_review_after_checkpoint_exits: 100
+
+  protect_a_cap2:
+    status: research_improved_shadow
+    description: Beta-high CP60 false-exit protection, capped at 2 per burst.
+    promote_after_protected_exits: 30
+    stronger_review_after_protected_exits: 50
+
+  symbol_failure_risk_off_48:
+    status: diagnostic_shadow
+    description: Same-symbol no-long risk layer; not an active gate.
+    live_action: counterfactual_only
+
+  low_coimpulse_router:
+    status: diagnostic_only
+    description: Explains weak regimes, not stable enough as an action router.
+    live_action: feature_logging_only
+
+diagnostic_only_lines:
+  - orderflow_15m_ranking
+  - static_orderbook_ranking
+  - cross_exchange_v4
+  - perp_crowding_v5
+  - onchain_attention_v6
+  - narrative_sector_v7
+  - listing_catalyst_v8
+  - standalone_short
+  - leader_beta_directed
+
+promotion_requirements:
+  min_core_trades: 100
+  min_checkpoint_exits: 50
+  min_protected_exits: 30
+  min_overflow_trades: 30
+  require_net20_gt_baseline: true
+  require_net30_positive: true
+  require_month_cap35_net20_positive: true
+  require_worst_month_not_worse_than_baseline: true
+  require_worst_burst_not_worse_than_baseline: true
+  require_cost_stress_30bp_not_collapsed: true
+  require_execution_realism_ready: true
+
+demotion_requirements:
+  if_core_trades_at_least: 100
+  demote_core_if_net20_lte: 0.0
+  demote_o6_if_overflow_trades_at_least: 30
+  demote_o6_if_incremental_net20_lte: 0.0
+  demote_cp60_if_checkpoint_exits_at_least: 50
+  demote_cp60_if_delta_lte: 0.0
+  demote_protect_a_if_protected_exits_at_least: 30
+  demote_protect_a_if_delta_lte: 0.0
+
+operating_mode:
+  weekly_promotion_audit: true
+  daily_health_check: true
+  stale_data_requires_attention: true
+  judge_short_window_results: false
+  default_sample_status: insufficient
+  default_evaluation_status: no_decision
