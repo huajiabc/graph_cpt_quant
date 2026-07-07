@@ -26,6 +26,7 @@ from pressure_graph.reports.v06c import _market_regime_features
 from pressure_graph.reports.v07a import _add_motif_columns
 from v06a3_live_once import (
     _concat_symbol_dir,
+    _carry_forward_rank_context,
     _floor_15m,
     _live_symbols,
     _rank_context,
@@ -45,6 +46,8 @@ def _build_live_prepared(live_root: Path, rank30: pd.DataFrame, rank90: pd.DataF
         raise FileNotFoundError("No live klines found after refresh.")
     features = build_feature_table(klines, funding, oi, instruments, base_config)
     features["month_start"] = _month_start(features["bar_open_time"])
+    rank30 = _carry_forward_rank_context(rank30, features["month_start"])
+    rank90 = _carry_forward_rank_context(rank90, features["month_start"])
     context30 = rank30.rename(
         columns={RANK30_COL: "turnover_rank_30d", "trailing_30d_turnover": "trailing_30d_turnover"}
     )[["month_start", "symbol", "turnover_rank_30d", "trailing_30d_turnover"]]

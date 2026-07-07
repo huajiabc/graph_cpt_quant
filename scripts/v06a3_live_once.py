@@ -48,6 +48,33 @@ def _month_start(series: pd.Series) -> pd.Series:
     return pd.to_datetime({"year": ts.dt.year, "month": ts.dt.month, "day": 1}, utc=True)
 
 
+def _carry_forward_rank_context(rank: pd.DataFrame, months: pd.Series) -> pd.DataFrame:
+    """Extend stale monthly rank context to live months using the latest prior month."""
+    if rank.empty or "month_start" not in rank.columns:
+        return rank
+    out = rank.copy()
+    out["month_start"] = pd.to_datetime(out["month_start"], utc=True, errors="coerce")
+    requested = pd.to_datetime(months, utc=True, errors="coerce").dropna().drop_duplicates()
+    available = sorted(out["month_start"].dropna().drop_duplicates().tolist())
+    if not available:
+        return out
+    existing = set(available)
+    carried: list[pd.DataFrame] = []
+    for month in sorted(pd.Timestamp(item) for item in requested):
+        if month in existing:
+            continue
+        prior = [item for item in available if item <= month]
+        source_month = prior[-1] if prior else available[-1]
+        source = out[out["month_start"].eq(source_month)].copy()
+        if source.empty:
+            continue
+        source["month_start"] = month
+        carried.append(source)
+    if carried:
+        out = pd.concat([out, *carried], ignore_index=True)
+    return out
+
+
 def _append_pruned(
     existing: pd.DataFrame,
     new: pd.DataFrame,
@@ -177,6 +204,8 @@ def _build_live_prepared(live_root: Path, rank30: pd.DataFrame, rank90: pd.DataF
         raise FileNotFoundError("No live klines found after refresh.")
     features = build_feature_table(klines, funding, oi, instruments, base_config)
     features["month_start"] = _month_start(features["bar_open_time"])
+    rank30 = _carry_forward_rank_context(rank30, features["month_start"])
+    rank90 = _carry_forward_rank_context(rank90, features["month_start"])
     context30 = rank30.rename(
         columns={RANK30_COL: "turnover_rank_30d", "trailing_30d_turnover": "trailing_30d_turnover"}
     )[["month_start", "symbol", "turnover_rank_30d", "trailing_30d_turnover"]]
