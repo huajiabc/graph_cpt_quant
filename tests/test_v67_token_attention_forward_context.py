@@ -18,6 +18,7 @@ def test_v67_token_attention_forward_context_is_counterfactual_only(tmp_path: Pa
     events_path = tmp_path / "events.csv"
     market_path = tmp_path / "market_days.csv"
     trades_path = tmp_path / "trades.csv"
+    ohlcv_path = tmp_path / "ohlcv.csv"
 
     pd.DataFrame(
         [
@@ -60,6 +61,12 @@ def test_v67_token_attention_forward_context_is_counterfactual_only(tmp_path: Pa
             },
         ]
     ).to_csv(trades_path, index=False)
+    pd.DataFrame(
+        [
+            {"cex_symbol": "AAAUSDT", "time_close": "2026-05-02 06:00:00+00:00"},
+            {"cex_symbol": "BBBUSDT", "time_close": "2026-05-04 06:00:00+00:00"},
+        ]
+    ).to_csv(ohlcv_path, index=False)
 
     cfg = V67Config(
         report_root=tmp_path / "reports" / "v67",
@@ -72,6 +79,7 @@ def test_v67_token_attention_forward_context_is_counterfactual_only(tmp_path: Pa
             random_trials=3,
             random_seed=7,
         ),
+        token_ohlcv_path=ohlcv_path,
     )
     outputs = write_v67_token_attention_forward_context(cfg)
 
@@ -83,6 +91,11 @@ def test_v67_token_attention_forward_context_is_counterfactual_only(tmp_path: Pa
     assert aaa["token_event_sources_24h"] == "unit_source"
     assert aaa["recommended_use"] == "forward_counterfactual_diagnostic_only"
     assert not bool(aaa["live_action_allowed"])
+    assert bool(aaa["token_mapping_covered"])
+    assert not bool(aaa["token_dataset_stale_at_entry"])
+    assert bool(aaa["token_event_asof_passed_24h"])
+    assert aaa["token_event_publication_latency_minutes_24h"] == 65.0
+    assert not bool(aaa["token_placebo_7d_prior_24h"])
 
     decisions = pd.read_csv(outputs["decision_table"])
     assert not decisions.empty
@@ -90,7 +103,7 @@ def test_v67_token_attention_forward_context_is_counterfactual_only(tmp_path: Pa
     assert not decisions["shadow_portfolio_allowed"].astype(bool).any()
 
     spec = pd.read_csv(outputs["live_field_spec"])
-    assert {"token_prior_24h", "token_event_age_minutes_24h", "token_attention_live_action_allowed"}.issubset(
+    assert {"token_prior_24h", "token_event_age_minutes_24h", "token_attention_live_action_allowed", "token_dataset_stale_at_entry", "token_placebo_7d_prior_24h"}.issubset(
         set(spec["field"])
     )
 
@@ -105,11 +118,23 @@ def test_v67_token_attention_forward_context_is_counterfactual_only(tmp_path: Pa
                     "signal_time": "2026-05-02 06:30:00+00:00",
                     "entry_time": "2026-05-02 07:00:00+00:00",
                     "net_return_20bp": 0.02,
-                }
+                },
+                {
+                    "trade_id": "live-unmapped",
+                    "signal_id": "live-signal-unmapped",
+                    "symbol": "ZZZUSDT",
+                    "candidate": "CIC2_FILTERED_MIR1",
+                    "signal_time": "2026-05-02 06:30:00+00:00",
+                    "entry_time": "2026-05-02 07:00:00+00:00",
+                    "net_return_20bp": -0.01,
+                },
             ]
         ),
         cfg,
     )
-    assert len(live) == 1
-    assert bool(live.iloc[0]["token_prior_24h"]) is True
-    assert live.iloc[0]["trade_id"] == "live-a"
+    assert len(live) == 2
+    live_a = live[live["trade_id"].eq("live-a")].iloc[0]
+    unmapped = live[live["trade_id"].eq("live-unmapped")].iloc[0]
+    assert bool(live_a["token_prior_24h"]) is True
+    assert not bool(unmapped["token_mapping_covered"])
+    assert bool(unmapped["token_dataset_stale_at_entry"])

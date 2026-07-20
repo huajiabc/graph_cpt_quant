@@ -1,0 +1,22 @@
+# v17.4 Deribit Skew-Stress Receiver OCO Findings
+
+Verdict: `reject_deribit_skew_receiver_oco`.
+
+| candidate                |   events |   mean_primary_net_bp |   bootstrap_95_low_bp |   bootstrap_95_high_bp |   random_family_percentile |   delayed_primary_net_bp |   positive_year_share | eligible   | failed_gates                                                                                                                                                                                                         | verdict                          |
+|:-------------------------|---------:|----------------------:|----------------------:|-----------------------:|---------------------------:|-------------------------:|----------------------:|:-----------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:---------------------------------|
+| DOS1_STRESS_RECEIVER_OCO |       26 |             -116.3440 |             -274.9531 |                36.0198 |                     0.0000 |                   3.5832 |                0.3447 | False      | full_primary_positive|validation_primary_positive|holdout_primary_positive|full_stress_positive|bootstrap_lower_positive|random_family_percentile_90|beats_one_day_delay|reference_4h_positive|reference_8h_positive | reject_deribit_skew_receiver_oco |
+
+| candidate                | scope       |   events |   active_years |   mean_filled_fraction |   mean_ambiguous_fraction |   mean_gross_bp |   mean_primary_net_bp |   mean_stress_net_bp |   win_rate_primary |   mean_rv_expansion |   mean_downside_expansion |   sum_primary_net |
+|:-------------------------|:------------|---------:|---------------:|-----------------------:|--------------------------:|----------------:|----------------------:|---------------------:|-------------------:|--------------------:|--------------------------:|------------------:|
+| DOS1_STRESS_RECEIVER_OCO | all         |       26 |              6 |                 0.9135 |                    0.0192 |        -88.9401 |             -116.3440 |            -134.6132 |             0.2692 |              1.0079 |                    0.8903 |           -0.3025 |
+| DOS1_STRESS_RECEIVER_OCO | development |       12 |              3 |                 0.8750 |                    0.0417 |         28.6077 |                2.3577 |             -15.1423 |             0.3333 |              1.0744 |                    0.7771 |            0.0028 |
+| DOS1_STRESS_RECEIVER_OCO | validation  |        6 |              1 |                 0.8750 |                    0.0000 |       -200.0174 |             -226.2674 |            -243.7674 |             0.1667 |              1.1172 |                    1.1120 |           -0.1358 |
+| DOS1_STRESS_RECEIVER_OCO | holdout     |        8 |              2 |                 1.0000 |                    0.0000 |       -181.9538 |             -211.9538 |            -231.9538 |             0.2500 |              0.8344 |                    0.8796 |           -0.1696 |
+| DOS2_RELIEF_RECEIVER_OCO | all         |       25 |              6 |                 0.7800 |                    0.0200 |         81.0747 |               57.6747 |              42.0747 |             0.4000 |              1.1034 |                    1.2666 |            0.1442 |
+| DOS2_RELIEF_RECEIVER_OCO | development |       13 |              3 |                 0.7885 |                    0.0192 |        -47.0862 |              -70.7400 |             -86.5092 |             0.3077 |              1.0811 |                    1.2032 |           -0.0920 |
+| DOS2_RELIEF_RECEIVER_OCO | validation  |        8 |              1 |                 0.7812 |                    0.0312 |        325.0531 |              301.6156 |             285.9906 |             0.5000 |              1.1726 |                    1.3250 |            0.2413 |
+| DOS2_RELIEF_RECEIVER_OCO | holdout     |        4 |              2 |                 0.7500 |                    0.0000 |          9.6406 |              -12.8594 |             -27.8594 |             0.5000 |              1.0373 |                    1.3560 |           -0.0051 |
+
+OCO directions use only post-signal hourly high/low touches. Same-hour dual
+touches and unfilled allocations remain cash. Option bars are signal-only;
+no option execution is simulated. No live permission changes.

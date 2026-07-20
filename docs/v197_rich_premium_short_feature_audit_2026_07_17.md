@@ -1,0 +1,13 @@
+# v19.7 Rich-Premium Short Feature-Only Audit
+
+| family                       |   weekly_targets |   active_months |   development_targets |   validation_targets |   holdout_targets |   median_selected_count |   mean_transition_turnover |   median_transition_turnover |   mean_selected_jaccard |   median_alt_notional |   median_btc_hedge_notional |   mean_funding_sign_alignment |   max_abs_residual_btc_beta |   max_gross_notional_drift |
+|:-----------------------------|-----------------:|----------------:|----------------------:|---------------------:|------------------:|------------------------:|---------------------------:|-----------------------------:|------------------------:|----------------------:|----------------------------:|------------------------------:|----------------------------:|---------------------------:|
+| GLOBAL_RICH_PREMIUM_SHORT    |               44 |              11 |                    22 |                    8 |                14 |                  8.0000 |                     0.6831 |                       0.6924 |                  0.1101 |                0.3949 |                      0.6051 |                        0.6364 |                      0.0000 |                     0.0000 |
+| GLOBAL_CHEAP_PREMIUM_LONG    |               44 |              11 |                    22 |                    8 |                14 |                  8.0000 |                     0.6985 |                       0.7001 |                  0.1016 |                0.3969 |                      0.6031 |                        0.3949 |                      0.0000 |                     0.0000 |
+| COMMUNITY_RICH_PREMIUM_SHORT |               44 |              11 |                    22 |                    8 |                14 |                  7.0000 |                     0.7152 |                       0.7413 |                  0.0844 |                0.3936 |                      0.6064 |                        0.6097 |                      0.0000 |                     0.0000 |
+| COMMUNITY_CHEAP_PREMIUM_LONG |               44 |              11 |                    22 |                    8 |                14 |                  7.0000 |                     0.7149 |                       0.6711 |                  0.0859 |                0.3852 |                      0.6148 |                        0.3927 |                      0.0000 |                     0.0000 |
+
+This is a post-v19.6 attribution follow-up. All four global/community and
+rich-short/cheap-long directions are retained as one multiplicity family.
+Only as-of selections, BTC hedges, and target turnover were calculated; no
+future price or funding return was inspected in this audit.

@@ -1,0 +1,65 @@
+strategy:
+  id: CM2_FIXED_80_FSS3_20_TG1
+  version: v16.5
+  status: LIVE_RECORD_ONLY
+  layer: portfolio_construction
+
+application:
+  scope: live_shadow
+  enabled: true
+  push_policy: record_only
+  runner: cm2_forward_shadow_once
+  real_orders_allowed: false
+  leverage_allowed: false
+
+construction:
+  allocation_rule: fixed_capital_sleeves
+  fss3_weight: 0.80
+  tg1_weight: 0.20
+  dynamic_allocation_allowed: false
+  cross_sleeve_netting_claimed: false
+
+parent_sleeves:
+  fss3:
+    id: FSS3_CURRENT_SIGN_070_TURNOVER_CAP
+    status: LIVE_RECORD_ONLY
+    role: core
+  tg1:
+    id: TG1_FORWARD_EXTENDED_TO_2026_07
+    status: REFERENCE_ONLY
+    role: internal_diversification_sleeve
+    standalone_live_application: false
+
+data:
+  base_config: configs/v0_3.yaml
+  live_root: data/live_cm2
+  membership_path: reports/v13_2_tg1_forward_temporal_extension/monthly_balanced_membership_extended.csv
+  tg1_seed_portfolio_path: reports/v13_2_tg1_forward_temporal_extension/weekly_portfolio.parquet
+  fss3_report_root: reports/v14_9_fss3_forward_shadow
+  history_days: 40
+  funding_lookback_days: 30
+  funding_max_age_hours: 12
+  refresh_interval_minutes: 360
+  price_stale_after_hours: 2
+
+decision:
+  weekday: Monday
+  hour_utc: 0
+  timely_lag_minutes: 60
+  incomplete_input_grace_minutes: 60
+  bucket_size: 9
+  hold_rank: 18
+
+execution:
+  bybit_leg: long_linear_perpetual
+  binance_leg: short_usdm_perpetual
+  primary_one_way_bps: 20
+  stress_one_way_bps: 40
+  real_orders_allowed: false
+
+forward:
+  report_root: reports/v16_5_cm2_forward_shadow
+  snapshot_inputs: true
+  count_only_timely_decisions: true
+  allow_historical_state_catchup: true
+  minimum_natural_weeks_before_review: 12

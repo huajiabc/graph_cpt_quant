@@ -29,6 +29,7 @@ class V80Config:
     bybit_kline_root: Path = DEFAULT_BYBIT_KLINES
     external_event_path: Path = DEFAULT_EXTERNAL_EVENTS
     cost_bps: float = 20.0
+    max_event_entry_delay_minutes: int = 30
 
 
 EVENT_SCHEMA = [
@@ -123,7 +124,12 @@ def _listing_events(instruments: pd.DataFrame, cfg: V80Config) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _future_from_raw(path: Path, event_time: pd.Timestamp, cost_bps: float) -> dict[str, float | int | str]:
+def _future_from_raw(
+    path: Path,
+    event_time: pd.Timestamp,
+    cost_bps: float,
+    max_event_entry_delay_minutes: int,
+) -> dict[str, float | int | str]:
     if not path.exists():
         return {"status": "missing_raw_kline"}
     try:
@@ -136,11 +142,23 @@ def _future_from_raw(path: Path, event_time: pd.Timestamp, cost_bps: float) -> d
     frame = frame.sort_values("bar_close_time")
     post = frame[frame["bar_close_time"].ge(event_time)].copy()
     if post.empty:
-        post = frame.head(1).copy()
+        return {"status": "no_bar_after_event"}
     entry = post.iloc[0]
     entry_time = pd.Timestamp(entry["bar_close_time"])
+    entry_delay_minutes = float((entry_time - event_time).total_seconds() / 60.0)
+    if entry_delay_minutes > max_event_entry_delay_minutes:
+        return {
+            "status": "event_time_not_covered",
+            "entry_time": entry_time.isoformat(),
+            "entry_delay_minutes": entry_delay_minutes,
+        }
     entry_close = float(entry["close"])
-    out: dict[str, float | int | str] = {"status": "ok", "entry_time": entry_time.isoformat(), "entry_close": entry_close}
+    out: dict[str, float | int | str] = {
+        "status": "ok",
+        "entry_time": entry_time.isoformat(),
+        "entry_delay_minutes": entry_delay_minutes,
+        "entry_close": entry_close,
+    }
     for label, bars in [("4h", 16), ("24h", 96), ("72h", 288), ("7d", 672)]:
         window = frame[(frame["bar_close_time"].ge(entry_time)) & (frame["bar_close_time"].le(entry_time + pd.Timedelta(minutes=15 * bars)))]
         if len(window) <= 1 or not np.isfinite(entry_close) or entry_close == 0:
@@ -165,7 +183,12 @@ def _post_listing_response(events: pd.DataFrame, cfg: V80Config) -> pd.DataFrame
     for row in events.itertuples(index=False):
         event = row._asdict()
         symbol = str(event["symbol"])
-        response = _future_from_raw(cfg.bybit_kline_root / f"{symbol}.parquet", pd.Timestamp(event["event_time"]), cfg.cost_bps)
+        response = _future_from_raw(
+            cfg.bybit_kline_root / f"{symbol}.parquet",
+            pd.Timestamp(event["event_time"]),
+            cfg.cost_bps,
+            cfg.max_event_entry_delay_minutes,
+        )
         rows.append({**event, **response, "month": pd.Timestamp(event["event_time"]).strftime("%Y-%m")})
     return pd.DataFrame(rows)
 
@@ -214,6 +237,12 @@ def _write_notes(path: Path, coverage: pd.DataFrame, listing_summary: pd.DataFra
     if not ok.empty:
         row = ok.iloc[0]
         lines.append(f"- Bybit listing events with raw kline replay: events={int(row['events'])}, net20_24h={row['net20_24h']:.4%}, net20_7d={row['net20_7d']:.4%}.")
+    else:
+        uncovered = int(listing_summary.loc[listing_summary["status"].eq("event_time_not_covered"), "events"].sum())
+        lines.append(
+            "- No listing event has raw kline coverage close enough to launch time; "
+            f"event_time_not_covered={uncovered}. No listing-return claim is valid."
+        )
     lines.extend(
         [
             "",

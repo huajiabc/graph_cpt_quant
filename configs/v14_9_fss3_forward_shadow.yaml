@@ -1,0 +1,46 @@
+strategy:
+  id: FSS3_CURRENT_SIGN_070_TURNOVER_CAP
+  version: v14.9
+  status: LIVE_RECORD_ONLY
+
+application:
+  scope: live_shadow
+  enabled: true
+  push_policy: record_only
+  runner: fss3_forward_shadow_once
+  real_orders_allowed: false
+  leverage_allowed: false
+
+data:
+  base_config: configs/v0_3.yaml
+  live_root: data/live_fss3
+  membership_path: reports/v13_2_tg1_forward_temporal_extension/monthly_balanced_membership_extended.csv
+  seed_weights_path: reports/v14_9_funding_sign_turnover_cap/weekly_weights.parquet
+  history_days: 55
+  beta_lookback_days: 30
+  funding_lookback_days: 7
+  funding_max_age_hours: 12
+  price_interval: 1h
+  price_stale_after_hours: 2
+  refresh_interval_minutes: 360
+
+decision:
+  weekday: Monday
+  hour_utc: 0
+  timely_lag_minutes: 60
+  incomplete_input_grace_minutes: 60
+  minimum_names_per_side: 4
+
+execution:
+  transition_turnover_cap: 0.70
+  bisection_iterations: 48
+  gross_notional: 1.0
+  btc_beta_target: 0.0
+  primary_one_way_bps: 20
+  stress_one_way_bps: 40
+
+forward:
+  report_root: reports/v14_9_fss3_forward_shadow
+  snapshot_inputs: true
+  count_only_timely_decisions: true
+  allow_historical_state_catchup: true

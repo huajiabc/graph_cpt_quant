@@ -335,8 +335,18 @@ def _notes(root: Path, tables: dict[str, pd.DataFrame]) -> None:
 
 def write_v23_forward_evaluation(cfg: V23Config = V23Config()) -> dict[str, Path]:
     root = ensure_dir(cfg.report_root)
-    checkpoint = _read_parquet(cfg.source_root / "checkpoint_trade_ledger.parquet")
-    overflow = _read_parquet(cfg.source_root / "overflow_trade_ledger.parquet")
+    forward_checkpoint = cfg.source_root / "forward" / "checkpoint_trades.parquet"
+    forward_overflow = cfg.source_root / "forward" / "overflow_trades.parquet"
+    checkpoint = _read_parquet(
+        forward_checkpoint if forward_checkpoint.exists() else cfg.source_root / "checkpoint_trade_ledger.parquet"
+    )
+    overflow = _read_parquet(
+        forward_overflow if forward_overflow.exists() else cfg.source_root / "overflow_trade_ledger.parquet"
+    )
+    if forward_checkpoint.exists() and "timely_forward_observation" in checkpoint.columns:
+        checkpoint = checkpoint[checkpoint["timely_forward_observation"].fillna(False).astype(bool)].copy()
+    if forward_overflow.exists() and "timely_forward_observation" in overflow.columns:
+        overflow = overflow[overflow["timely_forward_observation"].fillna(False).astype(bool)].copy()
     router = _read_parquet(cfg.source_root / "pre_entry_router_counterfactual_live.parquet")
     if router.empty:
         router = _read_csv(cfg.source_root / "pre_entry_router_counterfactual_live.csv")

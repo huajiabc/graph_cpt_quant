@@ -1,0 +1,93 @@
+strategy:
+  id: FSS3_CURRENT_SIGN_070_TURNOVER_CAP
+  version: v14.9
+  status: LIVE_RECORD_ONLY
+  decision_time: Monday 00:00 UTC
+  holding_days: 7
+  gross_notional: 1.0
+
+data:
+  venue: Bybit linear perpetual
+  price_interval: 1h closed bars
+  funding_source: settled funding history
+  membership: reports/v13_2_tg1_forward_temporal_extension/monthly_balanced_membership_extended.csv
+  funding_lookback_days: 7
+  beta_estimation: prior_month_30d_hourly_returns
+  latest_research_entry: 2026-07-06T00:00:00Z
+  latest_research_exit: 2026-07-13T00:00:00Z
+
+signal:
+  long_rule: prior_7d_settled_funding_sum_lt_0
+  short_rule: prior_7d_settled_funding_sum_gt_0
+  zero_rule: exclude
+  minimum_names_per_side: 4
+  ranking: none
+  raw_long_notional: 0.5
+  raw_short_notional: 0.5
+  within_side_weighting: equal
+
+portfolio:
+  btc_hedge: exact_current_estimated_beta
+  estimated_btc_beta_target: 0.0
+  gross_normalization: 1.0
+
+execution:
+  continuous_weekly_transition_l1_cap: 0.70
+  path: convex_alt_weight_blend_then_current_beta_hedge_and_gross_normalize
+  maximize_target_fraction_subject_to_cap: true
+  initial_entry_fully_charged: true
+  terminal_close_fully_charged_in_research: true
+  mandatory_exit_fully_charged: true
+  state_required: previous_executed_weights
+
+costs:
+  primary_one_way_bps: 20
+  stress_one_way_bps: 40
+  turnover: exact_signed_weight_l1
+
+evidence:
+  weeks: 49
+  months: 12
+  primary_net_bp_per_week: 94.1704
+  stress_net_bp_per_week: 80.8010
+  development_net_bp_per_week: 164.4507
+  validation_net_bp_per_week: 5.7845
+  holdout_net_bp_per_week: 65.8026
+  bootstrap_95_low_bp: 29.3437
+  discovery_null_percentile: 99.7
+  positive_month_concentration: 0.241706
+  mean_turnover: 0.668474
+  cap_binding_weeks: 24
+  return_correlation_with_uncapped_fss1: 0.992484
+  worst_week_bp: -356.5946
+  additive_max_drawdown_bp: -712.9789
+
+independent_audit:
+  artifact: reports/v14_9_funding_sign_turnover_cap/independent_audit.json
+  passed: true
+  max_structural_difference: 7.993605777301127e-15
+  alternate_bootstrap_95_low_bp: 29.4123
+  alternate_null_percentile: 99.64
+  minimum_leave_one_month_out_mean_bp: 74.8790
+  primary_funding_only_after_cost_bp: 32.3287
+  stress_funding_only_after_cost_bp: 18.9592
+
+permissions:
+  research_candidate_allowed: true
+  forward_shadow_candidate_allowed: true
+  forward_shadow_recording_implemented: true
+  forward_shadow_deployed: true
+  live_shadow_enabled: true
+  live_shadow_push_policy: record_only
+  paper_live_deployed: false
+  paper_live_allowed_by_this_file: false
+  remote_change_allowed_by_this_file: false
+  leverage_allowed: false
+  real_orders_allowed: false
+
+next_gates:
+  require_natural_forward_weeks_before_paperlive: true
+  require_forward_data_freshness_and_state_audit: true
+  require_execution_implementation_audit: true
+  require_remote_deployment_request: true
+  require_separate_leverage_preregistration: true

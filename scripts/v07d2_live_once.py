@@ -102,9 +102,61 @@ def main() -> None:
     _refresh_live_raw(symbols, base_config, live_root, args.history_days)
     prepared = _build_live_prepared(live_root, rank30, rank90, base_config, paper_config)
     write_parquet(prepared, live_root / "processed" / "v0_7d2_live_features.parquet")
-    outputs = write_v07d2_outputs(prepared, paper_config, args.signal_days, REPORT_ROOT, PAPER_DATA_ROOT)
+    observed_at = pd.Timestamp.now(tz="UTC")
+    outputs = write_v07d2_outputs(
+        prepared,
+        paper_config,
+        args.signal_days,
+        REPORT_ROOT,
+        PAPER_DATA_ROOT,
+        forward_mode=True,
+        observed_at=observed_at,
+    )
     for name, path in outputs.items():
         print(f"{name}: {path}")
+
+    from pressure_graph.live.gates import evaluate_live_gates, write_live_gate_artifacts
+
+    cumulative_signals = read_parquet(outputs["forward_signals"])
+    cumulative_checkpoints = read_parquet(outputs["forward_checkpoint_trades"])
+    cumulative_primary = cumulative_checkpoints[
+        cumulative_checkpoints.get("portfolio_id", pd.Series(dtype=str))
+        .astype(str)
+        .eq(paper_config.forward_primary.portfolio_id)
+    ].copy()
+    cumulative_baselines = read_parquet(outputs["forward_baseline_trades"])
+    gate_decision = evaluate_live_gates(
+        prepared,
+        cumulative_primary,
+        cumulative_baselines,
+        paper_config,
+        now=observed_at,
+    )
+    gate_outputs = write_live_gate_artifacts(
+        report_root=REPORT_ROOT,
+        decision=gate_decision,
+        cumulative_signals=cumulative_signals,
+        observed_at=observed_at,
+        cumulative_primary=cumulative_primary,
+    )
+    for name, path in gate_outputs.items():
+        print(f"gate.{name}: {path}")
+
+    try:
+        from pressure_graph.reports.v94_forward_monitoring import write_forward_monitoring
+
+        monitoring_outputs = write_forward_monitoring(
+            REPORT_ROOT,
+            primary_portfolio_id=paper_config.forward_primary.portfolio_id,
+            observed_at=observed_at,
+        )
+        for name, path in monitoring_outputs.items():
+            print(f"monitoring.{name}: {path}")
+    except Exception as exc:  # noqa: BLE001 - monitoring must never break the primary refresh
+        print(f"forward monitoring skipped: {exc}")
+
+    if gate_decision.data_stale:
+        raise SystemExit(2)
 
     s2_outputs = write_v07d2_s2_paper_live(prepared, args.signal_days, S2_PAPER_LIVE_ROOT)
     for name, path in s2_outputs.items():

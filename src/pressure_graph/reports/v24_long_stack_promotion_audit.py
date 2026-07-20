@@ -536,7 +536,12 @@ def _write_notes(root: Path, decisions: pd.DataFrame, sufficiency: pd.DataFrame)
 def write_v24_long_stack_promotion_audit(cfg: V24Config = V24Config()) -> dict[str, Path]:
     root = ensure_dir(cfg.report_root)
     architecture = _read_csv(cfg.v23_root / "live_architecture_summary.csv")
-    checkpoint = _read_parquet(cfg.source_root / "checkpoint_trade_ledger.parquet")
+    forward_checkpoint = cfg.source_root / "forward" / "checkpoint_trades.parquet"
+    checkpoint = _read_parquet(
+        forward_checkpoint if forward_checkpoint.exists() else cfg.source_root / "checkpoint_trade_ledger.parquet"
+    )
+    if forward_checkpoint.exists() and "timely_forward_observation" in checkpoint.columns:
+        checkpoint = checkpoint[checkpoint["timely_forward_observation"].fillna(False).astype(bool)].copy()
     stack = _stack_comparison(architecture, checkpoint)
     sufficiency = _forward_sample_sufficiency(stack, cfg)
     breakdown = _breakdown(stack)

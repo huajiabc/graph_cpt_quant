@@ -7,6 +7,7 @@ gate, sizing rule, shadow portfolio, or live permission.
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -21,7 +22,6 @@ from pressure_graph.reports.v66_token_attention_attribution import (
     _control_distribution,
     _fusion_summary,
     _leave_one_month,
-    _modules,
     _prepare_p2_trades,
     _read_mapping,
     _read_market_days,
@@ -31,6 +31,7 @@ from pressure_graph.reports.v66_token_attention_attribution import (
 
 REPORT_ROOT = Path("reports/v6_7_token_attention_forward_context")
 DEFAULT_V66_REPORT_ROOT = Path("reports/v6_6_token_attention_attribution")
+DEFAULT_TOKEN_OHLCV = Path("reports/v6_3_token_pool_dex_attention/token_pool_dexpaprika_ohlcv_1h.csv")
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,8 @@ class V67Config:
     min_o6_prior_trades: int = 30
     random_p75_threshold: float = 0.75
     random_p90_threshold: float = 0.90
+    token_ohlcv_path: Path = DEFAULT_TOKEN_OHLCV
+    dataset_stale_hours: int = 48
 
 
 def _num(frame: pd.DataFrame, col: str) -> pd.Series:
@@ -95,6 +98,49 @@ def _events_by_symbol(events: pd.DataFrame) -> dict[str, pd.DataFrame]:
     }
 
 
+def _coverage_times_by_symbol(path: Path) -> dict[str, np.ndarray]:
+    if not path.exists():
+        return {}
+    coverage = pd.read_csv(path, usecols=lambda col: col in {"cex_symbol", "time_close"}, low_memory=False)
+    if coverage.empty or not {"cex_symbol", "time_close"}.issubset(coverage.columns):
+        return {}
+    coverage["cex_symbol"] = coverage["cex_symbol"].fillna("").astype(str).str.upper()
+    coverage["available_time"] = pd.to_datetime(coverage["time_close"], utc=True, errors="coerce") + pd.Timedelta(minutes=5)
+    coverage = coverage.dropna(subset=["cex_symbol", "available_time"])
+    return {
+        str(symbol): group["available_time"].sort_values().to_numpy(dtype="datetime64[ns]")
+        for symbol, group in coverage.groupby("cex_symbol", sort=False)
+    }
+
+
+def _latest_visible_time(entry_time: pd.Timestamp, values: np.ndarray | None) -> pd.Timestamp:
+    if values is None or len(values) == 0 or pd.isna(entry_time):
+        return pd.NaT
+    entry64 = np.datetime64(entry_time.tz_convert("UTC").tz_localize(None), "ns")
+    idx = int(np.searchsorted(values, entry64, side="right") - 1)
+    return pd.NaT if idx < 0 else pd.Timestamp(values[idx], tz="UTC")
+
+
+def _stable_random_token(
+    trade_id: str,
+    symbol: str,
+    chain: str,
+    symbols_by_chain: dict[str, list[str]],
+) -> str:
+    choices = [item for item in symbols_by_chain.get(chain, []) if item != symbol]
+    if not choices:
+        return ""
+    digest = hashlib.sha256(str(trade_id).encode("utf-8")).digest()
+    return choices[int.from_bytes(digest[:8], "big") % len(choices)]
+
+
+def _count_events(local: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> int:
+    if local.empty or pd.isna(start) or pd.isna(end):
+        return 0
+    available = pd.to_datetime(local["event_available_time"], utc=True, errors="coerce")
+    return int((available.le(end) & available.gt(start)).sum())
+
+
 def _window_event_detail(
     symbol: str,
     entry_time: pd.Timestamp,
@@ -109,7 +155,10 @@ def _window_event_detail(
             f"token_event_max_zscore_{window}": np.nan,
             f"token_event_max_percentile_{window}": np.nan,
             f"token_event_latest_available_time_{window}": "",
+            f"token_event_latest_event_time_{window}": "",
             f"token_event_age_minutes_{window}": np.nan,
+            f"token_event_publication_latency_minutes_{window}": np.nan,
+            f"token_event_asof_passed_{window}": False,
         }
     start = entry_time - _parse_window(window)
     prior = local[local["event_available_time"].le(entry_time) & local["event_available_time"].gt(start)]
@@ -120,16 +169,28 @@ def _window_event_detail(
             f"token_event_max_zscore_{window}": np.nan,
             f"token_event_max_percentile_{window}": np.nan,
             f"token_event_latest_available_time_{window}": "",
+            f"token_event_latest_event_time_{window}": "",
             f"token_event_age_minutes_{window}": np.nan,
+            f"token_event_publication_latency_minutes_{window}": np.nan,
+            f"token_event_asof_passed_{window}": False,
         }
     latest = pd.to_datetime(prior["event_available_time"], utc=True, errors="coerce").max()
+    latest_rows = prior[pd.to_datetime(prior["event_available_time"], utc=True, errors="coerce").eq(latest)]
+    latest_event_time = pd.to_datetime(latest_rows.get("event_time"), utc=True, errors="coerce").max()
     return {
         f"token_event_types_{window}": _join_unique(prior.get("event_type", pd.Series(dtype=str))),
         f"token_event_sources_{window}": _join_unique(prior.get("source", pd.Series(dtype=str))),
         f"token_event_max_zscore_{window}": float(_num(prior, "zscore").max()) if _num(prior, "zscore").notna().any() else np.nan,
         f"token_event_max_percentile_{window}": float(_num(prior, "percentile").max()) if _num(prior, "percentile").notna().any() else np.nan,
         f"token_event_latest_available_time_{window}": latest.isoformat() if pd.notna(latest) else "",
+        f"token_event_latest_event_time_{window}": latest_event_time.isoformat() if pd.notna(latest_event_time) else "",
         f"token_event_age_minutes_{window}": float((entry_time - latest).total_seconds() / 60.0) if pd.notna(latest) else np.nan,
+        f"token_event_publication_latency_minutes_{window}": (
+            float((latest - latest_event_time).total_seconds() / 60.0)
+            if pd.notna(latest) and pd.notna(latest_event_time)
+            else np.nan
+        ),
+        f"token_event_asof_passed_{window}": bool(pd.notna(latest) and latest <= entry_time),
     }
 
 
@@ -138,10 +199,25 @@ def _context_ledger(
     events: pd.DataFrame,
     market_days: set[pd.Timestamp],
     cfg: V67Config,
+    mapping: pd.DataFrame | None = None,
+    coverage_times: dict[str, np.ndarray] | None = None,
 ) -> pd.DataFrame:
     if scored.empty:
         return pd.DataFrame()
     event_groups = _events_by_symbol(events)
+    mapping = mapping if mapping is not None else pd.DataFrame()
+    coverage_times = coverage_times or {}
+    mapping_by_symbol = (
+        mapping.drop_duplicates("cex_symbol").set_index("cex_symbol") if not mapping.empty else pd.DataFrame()
+    )
+    symbols_by_chain = (
+        {
+            str(chain): sorted(group["cex_symbol"].astype(str).unique().tolist())
+            for chain, group in mapping.groupby("chain", sort=False)
+        }
+        if not mapping.empty and "chain" in mapping.columns
+        else {}
+    )
     out = scored.copy()
     out["entry_time"] = pd.to_datetime(out["entry_time"], utc=True, errors="coerce")
     out["entry_day"] = out["entry_time"].dt.floor("D")
@@ -150,6 +226,29 @@ def _context_ledger(
     out["net20_later"] = _num(out, "net20")
     out["live_action_allowed"] = False
     out["recommended_use"] = "forward_counterfactual_diagnostic_only"
+    out["token_mapping_covered"] = out["symbol"].isin(set(mapping_by_symbol.index)) if not mapping_by_symbol.empty else False
+    out["token_mapping_confidence"] = (
+        out["symbol"].map(mapping_by_symbol["mapping_confidence"]).fillna("")
+        if not mapping_by_symbol.empty and "mapping_confidence" in mapping_by_symbol.columns
+        else ""
+    )
+    out["token_mapping_chain"] = (
+        out["symbol"].map(mapping_by_symbol["chain"]).fillna("")
+        if not mapping_by_symbol.empty and "chain" in mapping_by_symbol.columns
+        else ""
+    )
+    watermark_rows: list[dict[str, Any]] = []
+    for row in out[["symbol", "entry_time"]].itertuples(index=False):
+        visible = _latest_visible_time(pd.Timestamp(row.entry_time), coverage_times.get(str(row.symbol)))
+        age = float((pd.Timestamp(row.entry_time) - visible).total_seconds() / 3600.0) if pd.notna(visible) else np.nan
+        watermark_rows.append(
+            {
+                "token_dataset_latest_available_time": visible.isoformat() if pd.notna(visible) else "",
+                "token_dataset_age_hours": age,
+                "token_dataset_stale_at_entry": bool(pd.isna(visible) or age > cfg.dataset_stale_hours),
+            }
+        )
+    out = pd.concat([out, pd.DataFrame(watermark_rows, index=out.index)], axis=1)
 
     for window in cfg.v66.prior_windows:
         prior_col = f"token_prior_{window}"
@@ -163,6 +262,30 @@ def _context_ledger(
             details.append(_window_event_detail(str(row.symbol), pd.Timestamp(row.entry_time), event_groups, window))
         detail_frame = pd.DataFrame(details, index=out.index)
         out = pd.concat([out, detail_frame], axis=1)
+
+    control_rows: list[dict[str, Any]] = []
+    main_window = _parse_window(cfg.main_prior_window)
+    for row in out[["trade_id", "symbol", "entry_time", "token_mapping_chain"]].itertuples(index=False):
+        entry = pd.Timestamp(row.entry_time)
+        actual_symbol = str(row.symbol)
+        local = event_groups.get(actual_symbol, pd.DataFrame())
+        placebo_count = _count_events(local, entry - pd.Timedelta(days=8), entry - pd.Timedelta(days=7))
+        random_symbol = _stable_random_token(
+            str(row.trade_id), actual_symbol, str(row.token_mapping_chain), symbols_by_chain
+        )
+        random_count = _count_events(
+            event_groups.get(random_symbol, pd.DataFrame()), entry - main_window, entry
+        )
+        control_rows.append(
+            {
+                "token_placebo_7d_prior_24h": placebo_count > 0,
+                "token_placebo_7d_prior_24h_count": placebo_count,
+                "token_random_same_chain_symbol": random_symbol,
+                "token_random_same_chain_prior_24h": random_count > 0,
+                "token_random_same_chain_prior_24h_count": random_count,
+            }
+        )
+    out = pd.concat([out, pd.DataFrame(control_rows, index=out.index)], axis=1)
 
     keep = [
         "trade_id",
@@ -184,6 +307,17 @@ def _context_ledger(
         "is_o6",
         "live_action_allowed",
         "recommended_use",
+        "token_mapping_covered",
+        "token_mapping_confidence",
+        "token_mapping_chain",
+        "token_dataset_latest_available_time",
+        "token_dataset_age_hours",
+        "token_dataset_stale_at_entry",
+        "token_placebo_7d_prior_24h",
+        "token_placebo_7d_prior_24h_count",
+        "token_random_same_chain_symbol",
+        "token_random_same_chain_prior_24h",
+        "token_random_same_chain_prior_24h_count",
     ]
     for window in cfg.v66.prior_windows:
         keep.extend(
@@ -196,7 +330,10 @@ def _context_ledger(
                 f"token_event_max_zscore_{window}",
                 f"token_event_max_percentile_{window}",
                 f"token_event_latest_available_time_{window}",
+                f"token_event_latest_event_time_{window}",
                 f"token_event_age_minutes_{window}",
+                f"token_event_publication_latency_minutes_{window}",
+                f"token_event_asof_passed_{window}",
             ]
         )
     return out[[col for col in keep if col in out.columns]].copy()
@@ -223,9 +360,6 @@ def build_token_attention_context_for_trades(
 
     local = trades.copy()
     local["symbol"] = local.get("symbol", pd.Series("", index=local.index)).fillna("").astype(str).str.upper()
-    local = local[local["symbol"].isin(mapped_symbols)].copy()
-    if local.empty:
-        return pd.DataFrame()
     local["entry_time"] = pd.to_datetime(local.get("entry_time"), utc=True, errors="coerce")
     local["signal_time"] = pd.to_datetime(local.get("signal_time"), utc=True, errors="coerce")
     local["candidate"] = local.get("candidate", pd.Series("", index=local.index)).fillna("").astype(str)
@@ -257,7 +391,14 @@ def build_token_attention_context_for_trades(
     local["is_o6"] = _num(local, "burst_count_so_far").ge(9)
     local = local.dropna(subset=["entry_time"]).reset_index(drop=True)
     scored = _attach_prior_flags(local, events, v66.prior_windows, prefix="token")
-    return _context_ledger(scored, events, market_days, cfg)
+    return _context_ledger(
+        scored,
+        events,
+        market_days,
+        cfg,
+        mapping=mapping,
+        coverage_times=_coverage_times_by_symbol(cfg.token_ohlcv_path),
+    )
 
 
 def _control_features(controls: pd.DataFrame) -> pd.DataFrame:
@@ -402,6 +543,30 @@ def _live_field_spec(cfg: V67Config) -> pd.DataFrame:
             "asof_requirement": "constant false",
             "description": "Must remain false until a future promotion audit changes permissions.",
         },
+        {
+            "field": "token_mapping_covered",
+            "type": "bool",
+            "asof_requirement": "A/B mapping frozen before entry",
+            "description": "Whether the traded symbol has an approved token/pool mapping.",
+        },
+        {
+            "field": "token_dataset_stale_at_entry",
+            "type": "bool",
+            "asof_requirement": "latest visible pool bar <= entry time",
+            "description": f"True when the same-token pool data watermark is older than {cfg.dataset_stale_hours} hours.",
+        },
+        {
+            "field": "token_placebo_7d_prior_24h",
+            "type": "bool",
+            "asof_requirement": "fixed entry-8d to entry-7d window",
+            "description": "Same-token shifted-time placebo control.",
+        },
+        {
+            "field": "token_random_same_chain_prior_24h",
+            "type": "bool",
+            "asof_requirement": "stable-hash same-chain token selected before outcome",
+            "description": "Deterministic same-chain random-token control.",
+        },
     ]
     for window in cfg.v66.prior_windows:
         rows.extend(
@@ -499,7 +664,14 @@ def write_v67_token_attention_forward_context(cfg: V67Config | None = None) -> d
     leave_one = _read_csv(cfg.v66_report_root / "leave_one_month.csv")
     if leave_one.empty:
         leave_one = _leave_one_month(scored, v66)
-    ledger = _context_ledger(scored, events, market_days, cfg)
+    ledger = _context_ledger(
+        scored,
+        events,
+        market_days,
+        cfg,
+        mapping=mapping,
+        coverage_times=_coverage_times_by_symbol(cfg.token_ohlcv_path),
+    )
     summary = _context_summary(scored, controls, leave_one, cfg)
     decisions = _decision_table(summary, cfg)
     live_spec = _live_field_spec(cfg)
@@ -508,6 +680,16 @@ def write_v67_token_attention_forward_context(cfg: V67Config | None = None) -> d
             {"dataset": "mapped_A_B_symbols", "rows": int(mapping["cex_symbol"].nunique()) if not mapping.empty else 0, "status": "reference"},
             {"dataset": "token_events", "rows": int(len(events)), "status": "ok" if len(events) else "missing"},
             {"dataset": "forward_context_trades", "rows": int(len(ledger)), "status": "ok" if len(ledger) else "missing"},
+            {
+                "dataset": "mapping_covered_forward_trades",
+                "rows": int(_bool(ledger, "token_mapping_covered").sum()) if not ledger.empty else 0,
+                "status": "coverage",
+            },
+            {
+                "dataset": "fresh_token_dataset_forward_trades",
+                "rows": int((~_bool(ledger, "token_dataset_stale_at_entry")).sum()) if not ledger.empty else 0,
+                "status": "coverage",
+            },
             {
                 "dataset": f"token_prior_{cfg.main_prior_window}_trades",
                 "rows": int(_bool(ledger, f"token_prior_{cfg.main_prior_window}").sum()) if not ledger.empty else 0,

@@ -516,7 +516,7 @@ def run_v07d2_paper(
     ),
     days: int | None = typer.Option(
         30,
-        help="Latest days to replay with the fixed v0.7D.2 paper-live engine. Use 0 for all available rows.",
+        help="Latest days to write to the isolated v0.7D.2 historical replay namespace. Use 0 for all available rows.",
     ),
 ) -> None:
     cfg = load_config(config)

@@ -130,3 +130,29 @@ def test_v80_catalyst_event_alpha_replays_listing(tmp_path: Path) -> None:
     summary = pd.read_csv(outputs["listing_event_summary"])
     assert int(summary.loc[summary["status"].eq("ok"), "events"].iloc[0]) == 1
 
+
+def test_v80_rejects_kline_that_starts_long_after_listing(tmp_path: Path) -> None:
+    inst = tmp_path / "instruments.parquet"
+    pd.DataFrame(
+        {
+            "symbol": ["AAAUSDT"],
+            "baseCoin": ["AAA"],
+            "status": ["Trading"],
+            "launch_time": pd.to_datetime(["2025-12-01 00:00:00+00:00"], utc=True),
+        }
+    ).to_parquet(inst, index=False)
+    kline_root = tmp_path / "klines"
+    _write_kline(kline_root, "AAAUSDT")
+
+    outputs = write_v80_catalyst_event_alpha(
+        V80Config(
+            report_root=tmp_path / "reports" / "v80_delayed",
+            bybit_instruments_path=inst,
+            bybit_kline_root=kline_root,
+            external_event_path=tmp_path / "missing.csv",
+        )
+    )
+
+    response = pd.read_csv(outputs["post_listing_response"])
+    assert response["status"].iloc[0] == "event_time_not_covered"
+

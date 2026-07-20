@@ -1,7 +1,7 @@
 experiment:
   name: v0_7d2_cic_mir1_paper_live
   mode: paper_live
-  strategy_id: cic_filtered_mir1_primary
+  strategy_id: p2_cic_combined_max8_forward_primary
   primary_candidate: CIC1_FILTERED_MIR1
   timezone: UTC
   base_interval: 15m
@@ -11,6 +11,13 @@ experiment:
   tick_validation_status: pending
   historical_validation_status: v0_7d1_passed
   candidate_rating: B- CIC-filtered MIR1 paper-live candidate
+
+forward_primary:
+  portfolio_id: P2_MAX8_BASELINE
+  label: P2 CIC1+CIC2 max8
+  max_positions: 8
+  role: primary_forward_paper
+  reference_candidate: CIC1_FILTERED_MIR1
 
 exchange:
   name: bybit

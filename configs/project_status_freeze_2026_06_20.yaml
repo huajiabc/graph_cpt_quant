@@ -1,0 +1,148 @@
+# Project-level convergence freeze as of 2026-06-20.
+# This is a governance artifact. It does not change live execution by itself.
+
+freeze:
+  date: "2026-06-20"
+  mode: "convergence"
+  rationale: >
+    Long-side CIC/P2 remains the only coherent forward candidate. Short-side
+    research has closed as automated alpha and survives only as long-book risk
+    context. Broad historical rule mining is paused until future samples or a
+    genuinely new information source justify reopening.
+
+permissions:
+  paper_live_allowed: true
+  shadow_logging_allowed: true
+  real_live_allowed: false
+  canary_live_allowed: false
+  new_broad_historical_rule_mining_allowed: false
+  diagnostic_data_collection_allowed: true
+
+active_benchmarks:
+  - id: "S0_P2_MAX8"
+    label: "P2 CIC1+CIC2 max8"
+    status: "core_forward_baseline"
+    action_permission: "paper_or_shadow_logging_only"
+
+  - id: "S3_P2_MAX8_CP60_O6"
+    label: "P2 max8 + CP60 + O6"
+    status: "conservative_managed_shadow"
+    action_permission: "shadow_logging_only"
+
+  - id: "S5_P2_MAX8_PROTECT_A_CAP2_O6"
+    label: "P2 max8 + Protect_A cap2 + O6"
+    status: "research_improved_shadow"
+    action_permission: "shadow_logging_only"
+
+long_components:
+  p2_core:
+    status: "active_forward_candidate"
+    evaluation_threshold_trades: 100
+    stronger_review_threshold_trades: 200
+
+  o6_late_burst_overflow:
+    status: "shadow_only"
+    evaluation_threshold_trades: 30
+    stronger_review_threshold_trades: 50
+
+  cp60_checkpoint:
+    status: "shadow_only"
+    evaluation_threshold_exits: 50
+    stronger_review_threshold_exits: 100
+
+  protect_a_cap2:
+    status: "research_improved_shadow"
+    evaluation_threshold_protected_exits: 30
+    stronger_review_threshold_protected_exits: 50
+
+  failure_risk_off_f3_f5:
+    status: "diagnostic_shadow"
+    action_permission: "counterfactual_only"
+    cooldown_bars: 48
+    scope: "same_symbol_no_long_or_no_overflow_context"
+
+diagnostic_only_lines:
+  low_coimpulse_router:
+    status: "feature_logging_only"
+  token_onchain_attention:
+    status: "counterfactual_context_only"
+  orderflow_orderbook:
+    status: "data_layer_only"
+  sell_pressure_propagation:
+    status: "map_only"
+  cross_exchange_v4:
+    status: "diagnostic_only"
+  perp_crowding_v5:
+    status: "diagnostic_only"
+  narrative_sector_v7:
+    status: "diagnostic_only"
+  listing_catalyst_v8:
+    status: "atlas_only"
+
+short_side:
+  automated_short_permission: false
+  status: "closed_as_strategy"
+  retained_as:
+    - "long_book_risk_context"
+    - "counterfactual_shadow"
+    - "diagnostic_map"
+  rejected_or_demoted:
+    - "standalone_short"
+    - "motif_led_failed_reclaim_short"
+    - "cic_failure_short"
+    - "crowded_stall_automated_short"
+    - "relative_value_beta_short"
+    - "a1_cross_exchange_downside_lead_lag_strategy"
+  reopen_requirements:
+    min_distributed_months: 3
+    max_best_month_share: 0.35
+    hedge_corr_lte: -0.3
+    allow_alternative_hedge_condition: "positive_pnl_in_long_stack_worst_month"
+    cost_bps_required: 30
+    extra_slippage_bps_required: 5
+    must_beat_no_long: true
+    max_short_squeeze_before_hit: 0.20
+
+global_validation_gates:
+  max_best_month_share_for_promotion: 0.35
+  require_month_cap35_net20_positive: true
+  max_symbol_contribution_for_promotion: 0.35
+  require_leave_one_month_not_collapsed: true
+  require_walk_forward_no_negative_bucket: true
+  require_bootstrap_ci_low_gt_zero_for_promote: true
+  require_matched_random_p75: true
+  prefer_matched_random_p90: true
+  require_cost_stress_30bp: true
+  require_execution_realism_ready_for_live: true
+  require_risk_envelope_ready_for_live: true
+
+demotion_rules:
+  p2_core:
+    when_trades_gte: 100
+    demote_if_net20_lte: 0.0
+  o6_late_burst_overflow:
+    when_trades_gte: 30
+    demote_if_incremental_net20_lte: 0.0
+  cp60_checkpoint:
+    when_exits_gte: 50
+    demote_if_delta_lte: 0.0
+  protect_a_cap2:
+    when_protected_exits_gte: 30
+    demote_if_delta_lte: 0.0
+  failure_risk_off_f3_f5:
+    when_suppressions_gte: 50
+    demote_if_harms_net_and_drawdown: true
+
+operating_loop:
+  weekly_promotion_audit: true
+  daily_health_check: true
+  default_sample_status: "insufficient"
+  default_evaluation_status: "no_decision"
+  rerun_long_audit_chain:
+    - "v2.3_forward_evaluation_decision_ledger"
+    - "v2.4_long_stack_promotion_audit"
+    - "v2.5_execution_realism_audit"
+    - "v2.6_risk_envelope_finalization"
+  no_new_rule_mining_without:
+    - "new_information_source"
+    - "pre_registered_validation_plan"

@@ -1,0 +1,40 @@
+strategy:
+  id: DVB5_POSITIVE_PRESSURE_0625SIGMA_BTC_BREAKOUT
+  version: v23.8
+  status: CANDIDATE_WATCH
+  limitation: post_selected_and_absolute_month_bootstrap_lower_below_zero
+
+application:
+  scope: live_shadow
+  enabled: true
+  push_policy: record_only
+  runner: q90_forward_shadow_once
+  real_orders_allowed: false
+  leverage_allowed: false
+
+data:
+  base_config: configs/v0_3.yaml
+  historical_feature_root: data/external/binance_um_book_depth/hourly_features
+  forward_root: data/external/v238_forward_shadow
+  report_root: reports/v23_8_q90_forward_shadow
+  historical_cutoff: 2026-07-15T00:00:00Z
+  first_forward_book_day: 2026-07-15
+  archive_publication_lag_days: 1
+  maximum_days_per_run: 1
+  download_workers: 8
+
+signal:
+  pressure_quantile: 0.90
+  direction: positive_only
+  barrier_sigma_multiple: 0.625
+  horizon_hours: 4
+  bar_minutes: 15
+  primary_round_trip_bps: 10
+  stress_round_trip_bps: 20
+
+forward:
+  delayed_archive_observation: true
+  timely_execution_eligible: false
+  forward_research_evidence_eligible: true
+  snapshot_inputs: true
+  real_orders_allowed: false

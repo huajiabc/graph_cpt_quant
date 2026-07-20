@@ -11,6 +11,7 @@ from pressure_graph.config.v07a2 import V07A2Config
 from pressure_graph.io import ensure_dir, write_parquet
 from pressure_graph.reports.v09a import REPORT_ROOT as V09A_REPORT_ROOT
 from pressure_graph.reports.v09a import add_cluster_graph_features
+from pressure_graph.reports.v92_p2_correlation_clusters import add_asof_correlation_clusters
 from pressure_graph.reports.v22b_preentry_meta_router import (
     V21G_ROOT as V22_ROUTER_TRAIN_ROOT,
     V22BConfig,
@@ -40,6 +41,8 @@ from pressure_graph.paper_live.v07a2 import (
 
 REPORT_ROOT = Path("reports/v0_7d2_cic_mir1_paper_live")
 PAPER_DATA_ROOT = Path("data/paper/v0_7d2")
+REPLAY_REPORT_ROOT = Path("reports/v0_7d2_cic_mir1_replay")
+REPLAY_DATA_ROOT = Path("data/replay/v0_7d2")
 OVERFLOW_PORTFOLIO_ID = "P2_MAX8_PLUS_O6_LATE_BURST_OVERFLOW"
 CHECKPOINT_PORTFOLIO_IDS = {
     "S0": "P2_MAX8_BASELINE",
@@ -152,8 +155,41 @@ def _add_cluster_context(prepared: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(out_frames, ignore_index=True) if out_frames else data.drop(columns=["_cluster_month_start"], errors="ignore")
 
 
+def _add_btc_risk_context(
+    frame: pd.DataFrame,
+    *,
+    window_bars: int = 7 * 24 * 4,
+    min_periods: int = 2 * 24 * 4,
+) -> pd.DataFrame:
+    """Attach entry-visible rolling BTC beta/correlation using overlapping 1h returns."""
+    if frame.empty:
+        return frame.copy()
+    if {"btc_beta_7d", "btc_corr_7d"}.issubset(frame.columns):
+        return frame.copy()
+    out = frame.sort_values(["exchange", "symbol", "bar_open_time"]).copy()
+    out["btc_beta_7d"] = np.nan
+    out["btc_corr_7d"] = np.nan
+    for _, group in out.groupby(["exchange", "symbol"], sort=False, observed=True):
+        symbol_ret = pd.to_numeric(
+            group.get("ret_1h", pd.Series(np.nan, index=group.index)), errors="coerce"
+        )
+        btc_ret = pd.to_numeric(
+            group.get("btc_ret_1h", pd.Series(np.nan, index=group.index)), errors="coerce"
+        )
+        btc_var = btc_ret.rolling(window_bars, min_periods=min_periods).var(ddof=0).replace(0.0, np.nan)
+        covariance = symbol_ret.rolling(window_bars, min_periods=min_periods).cov(btc_ret, ddof=0)
+        out.loc[group.index, "btc_beta_7d"] = (covariance / btc_var).to_numpy()
+        out.loc[group.index, "btc_corr_7d"] = symbol_ret.rolling(
+            window_bars, min_periods=min_periods
+        ).corr(btc_ret).to_numpy()
+    return out
+
+
 def add_v07d2_live_columns(df: pd.DataFrame, config: V07A2Config) -> pd.DataFrame:
     out = add_v07a2_live_columns(df, config).copy()
+    out = _add_btc_risk_context(out)
+    if "correlation_cluster_id" not in out.columns:
+        out, _, _ = add_asof_correlation_clusters(out)
     out = _add_cluster_context(out)
     market = out.get("market_volume_impulse_density_high", pd.Series(False, index=out.index)).fillna(False).astype(bool)
     density = pd.to_numeric(out.get("volume_impulse_density"), errors="coerce")
@@ -1673,12 +1709,33 @@ def _write_status(
     primary = _primary_portfolio_trades(trades, config)
     net10 = _safe_float(primary.get("net_return_10bp", pd.Series(dtype=float)).mean())
     net20 = _safe_float(primary.get("net_return_20bp", pd.Series(dtype=float)).mean())
-    sample_status, evaluation_status = _sample_status(len(primary))
+    forward_primary_trades = 0
+    forward_primary_net20 = np.nan
+    if shadow_status is not None and not shadow_status.empty:
+        selected = shadow_status[
+            shadow_status["portfolio_id"].astype(str).eq(config.forward_primary.portfolio_id)
+        ]
+        if not selected.empty:
+            forward_primary_trades = int(selected.iloc[0]["selected_trades"])
+    if shadow_summary is not None and not shadow_summary.empty:
+        selected_summary = shadow_summary[
+            shadow_summary["portfolio_id"].astype(str).eq(config.forward_primary.portfolio_id)
+            & pd.to_numeric(shadow_summary["cost_single_side_bps"], errors="coerce").eq(20)
+        ]
+        if not selected_summary.empty:
+            forward_primary_net20 = _safe_float(selected_summary.iloc[0].get("selected_net"))
+    sample_status, evaluation_status = _sample_status(forward_primary_trades)
     current_lines = [
-        "# v0.7D.2 CIC-filtered MIR1 Paper-Live Status",
+        "# v0.7D.2 P2 Max8 Forward Paper-Live Status",
         "",
         f"- strategy_id: {config.experiment.strategy_id}",
-        f"- primary_candidate: {config.experiment.primary_candidate}",
+        f"- forward_primary_portfolio: {config.forward_primary.portfolio_id}",
+        f"- forward_primary_label: {config.forward_primary.label}",
+        f"- forward_primary_max_positions: {config.forward_primary.max_positions}",
+        f"- forward_primary_role: {config.forward_primary.role}",
+        f"- reference_candidate: {config.forward_primary.reference_candidate}",
+        f"- reference_candidate_max_positions: {config.portfolio.primary_max_positions}",
+        "- governance_primary_alignment: aligned_p2_max8_forward_paper",
         f"- candidate_rating: {config.experiment.candidate_rating}",
         f"- latest_feature_time: {latest}",
         f"- btc_state: {market['btc_state']}",
@@ -1690,11 +1747,17 @@ def _write_status(
         f"- tick_validation_status: {config.experiment.tick_validation_status}",
         f"- historical_validation_status: {config.experiment.historical_validation_status}",
         f"- total_candidate_signals: {len(signals)}",
-        f"- primary_portfolio_trades: {len(primary)}",
+        f"- forward_primary_trades: {forward_primary_trades}",
+        (
+            f"- forward_primary_net_20bp_avg: {forward_primary_net20:.4%}"
+            if pd.notna(forward_primary_net20)
+            else "- forward_primary_net_20bp_avg: n/a"
+        ),
+        f"- reference_candidate_trades: {len(primary)}",
         f"- sample_status: {sample_status}",
         f"- evaluation_status: {evaluation_status}",
-        f"- primary_net_10bp_avg: {net10:.4%}" if pd.notna(net10) else "- primary_net_10bp_avg: n/a",
-        f"- primary_net_20bp_avg: {net20:.4%}" if pd.notna(net20) else "- primary_net_20bp_avg: n/a",
+        f"- reference_net_10bp_avg: {net10:.4%}" if pd.notna(net10) else "- reference_net_10bp_avg: n/a",
+        f"- reference_net_20bp_avg: {net20:.4%}" if pd.notna(net20) else "- reference_net_20bp_avg: n/a",
         f"- baseline_trades: {len(baseline_trades)}",
     ]
     if shadow_status is not None and not shadow_status.empty:
@@ -1711,26 +1774,26 @@ def _write_status(
     note = [
         "# v0.7D.2 Candidate Status",
         "",
-        "Decision: CIC-filtered MIR1 is the primary B- paper-live candidate.",
+        f"Decision: {config.forward_primary.label} is the primary forward paper portfolio.",
         "",
         "Definition: market volume impulse density high -> local bullish volume shock -> beta continuation state -> 1pct reclaim -> vol-regime-fast exit.",
         "",
-        "Primary: CIC1_FILTERED_MIR1. Secondary shadow: CIC2_FILTERED_MIR1. MIR1_RAW is reference/ablation only.",
+        "Forward primary: P2 combines CIC1 and CIC2, first-come, equal-notional, max8. CIC1 max3 is retained as a reference ledger.",
         "",
         "Gate rule: signal and entry must both pass using as-of market/continuation features (`feature_time <= decision_time`).",
         "",
         "Real-live: disabled until tick/orderflow validation and sufficient future paper-live sample.",
         "",
-        "Do not evaluate before primary filled trades >= 30 for behavior checks and >= 100 for candidate checks.",
+        "Do not evaluate before P2 forward trades >= 30 for behavior checks and >= 100 for candidate checks.",
         "",
-        f"filled_trades = {len(primary)}",
+        f"forward_primary_trades = {forward_primary_trades}",
         f"sample_status = {sample_status}",
         f"evaluation_status = {evaluation_status}",
         "",
-        "## Primary Portfolio",
+        "## Reference Candidate Ledger",
     ]
     if primary_summary.empty:
-        note.append("- No primary portfolio trades yet.")
+        note.append("- No CIC1 max3 reference trades yet.")
     else:
         for row in primary_summary.itertuples(index=False):
             note.append(
@@ -1752,8 +1815,8 @@ def _write_status(
         for row in baseline_summary.itertuples(index=False):
             note.append(f"- {row.candidate}/{row.baseline_kind}: trades={row.trades}, net10={getattr(row, 'net_10bp_avg', np.nan):.4%}")
     note.append("")
-    note.append("## v0.9B.1 Shadow Portfolio Integration")
-    note.append("Primary remains unchanged. Shadow portfolios are counterfactual ledgers and do not affect primary paper PnL.")
+    note.append("## v0.9B.1 Portfolio Integration")
+    note.append("P2_CIC_COMBINED_BASKET_MAX8 is the forward primary; other portfolios remain counterfactual shadows.")
     if shadow_summary is None or shadow_summary.empty:
         note.append("- No shadow portfolio candidates yet.")
     else:
@@ -1775,7 +1838,7 @@ def _write_shadow_status(
     lines = [
         "# v0.9B.1 Shadow Portfolio Status",
         "",
-        "These portfolios are diagnostics only. They do not replace CIC-filtered MIR1 primary.",
+        "P2_CIC_COMBINED_BASKET_MAX8 is the forward primary. Other rows remain diagnostics only.",
         "",
     ]
     if shadow_status.empty:
@@ -1825,6 +1888,9 @@ def write_v07d2_outputs(
     signal_days: int,
     report_root: Path = REPORT_ROOT,
     paper_data_root: Path = PAPER_DATA_ROOT,
+    *,
+    forward_mode: bool = False,
+    observed_at: object | None = None,
 ) -> dict[str, Path]:
     report_root = ensure_dir(report_root)
     paper_data_root = ensure_dir(paper_data_root)
@@ -1846,11 +1912,33 @@ def write_v07d2_outputs(
         checkpoint_shadow_live(trades, prepared)
     )
     checkpoint_pool = _checkpoint_trade_pool(trades, prepared)
+    from pressure_graph.reports.v91_p2_portfolio_risk_shadows import (
+        build_p2_portfolio_risk_shadows,
+    )
+
+    risk_shadow_trades, risk_shadow_skipped, risk_shadow_summary = (
+        build_p2_portfolio_risk_shadows(checkpoint_pool)
+    )
     checkpoint_time_audit = _checkpoint_local_time_audit(checkpoint_pool, prepared)
     checkpoint_candidate_type_audit = _checkpoint_candidate_type_audit(checkpoint_ledger)
     checkpoint_protection_attribution = _checkpoint_protection_attribution_live(checkpoint_ledger)
     pre_entry_router_counterfactual = _pre_entry_router_counterfactual_live(trades)
     token_attention_counterfactual = _token_attention_counterfactual_live(trades)
+    correlation_membership = prepared.assign(
+        month_start=pd.to_datetime(
+            pd.to_datetime(prepared.get("feature_time"), utc=True, errors="coerce").dt.strftime("%Y-%m-01"),
+            utc=True,
+            errors="coerce",
+        )
+    )[
+        [
+            "month_start",
+            "symbol",
+            "correlation_cluster_id",
+            "correlation_cluster_size",
+            "correlation_cluster_input_covered",
+        ]
+    ].drop_duplicates(["month_start", "symbol"])
     outputs = {
         "paper_signals": report_root / "paper_signals.parquet",
         "paper_trades": report_root / "paper_trades.parquet",
@@ -1883,6 +1971,11 @@ def write_v07d2_outputs(
         "checkpoint_current_status": report_root / "checkpoint_current_status.md",
         "checkpoint_45_60_75_audit": report_root / "checkpoint_45_60_75_audit.csv",
         "checkpoint_candidate_type_audit": report_root / "checkpoint_candidate_type_audit.csv",
+        "risk_shadow_trades": report_root / "p2_risk_shadow_trades.parquet",
+        "risk_shadow_skipped": report_root / "p2_risk_shadow_skipped.parquet",
+        "risk_shadow_summary": report_root / "p2_risk_shadow_summary.csv",
+        "risk_shadow_status": report_root / "p2_risk_shadow_status.md",
+        "correlation_cluster_membership": report_root / "p2_correlation_cluster_membership.csv",
         "pre_entry_router_counterfactual_live": report_root / "pre_entry_router_counterfactual_live.csv",
         "pre_entry_router_counterfactual_live_data": report_root / "pre_entry_router_counterfactual_live.parquet",
         "token_attention_counterfactual_live": report_root / "token_attention_counterfactual_live.csv",
@@ -1926,6 +2019,23 @@ def write_v07d2_outputs(
     checkpoint_protection_attribution.to_csv(outputs["checkpoint_protection_attribution_live"], index=False)
     checkpoint_time_audit.to_csv(outputs["checkpoint_45_60_75_audit"], index=False)
     checkpoint_candidate_type_audit.to_csv(outputs["checkpoint_candidate_type_audit"], index=False)
+    write_parquet(risk_shadow_trades, outputs["risk_shadow_trades"])
+    write_parquet(risk_shadow_skipped, outputs["risk_shadow_skipped"])
+    risk_shadow_summary.to_csv(outputs["risk_shadow_summary"], index=False)
+    correlation_membership.to_csv(outputs["correlation_cluster_membership"], index=False)
+    risk_lines = [
+        "# P2 Portfolio Risk Shadows",
+        "",
+        "Status: counterfactual shadow only. P2_EW remains the primary forward paper ledger.",
+        "",
+    ]
+    for row in risk_shadow_summary.to_dict("records"):
+        risk_lines.append(
+            f"- {row['risk_shadow_arm']}: selected={int(row['selected_trades'])}, "
+            f"skipped={int(row['skipped_candidates'])}, net20={float(row['portfolio_net20']):.4%}, "
+            f"max_exposure={float(row['max_total_exposure']):.2f}"
+        )
+    outputs["risk_shadow_status"].write_text("\n".join(risk_lines), encoding="utf-8")
     pre_entry_router_counterfactual.to_csv(outputs["pre_entry_router_counterfactual_live"], index=False)
     write_parquet(pre_entry_router_counterfactual, outputs["pre_entry_router_counterfactual_live_data"])
     token_attention_counterfactual.to_csv(outputs["token_attention_counterfactual_live"], index=False)
@@ -1935,6 +2045,25 @@ def write_v07d2_outputs(
     _write_checkpoint_status(report_root, checkpoint_status, checkpoint_summary, slot_release)
     _write_status(report_root, prepared, signals, trades, baseline_trades, config, shadow_status, shadow_summary)
     _append_decision_log(report_root, prepared, trades, config)
+    if forward_mode:
+        from pressure_graph.paper_live.forward_ledger import write_forward_run
+
+        forward_outputs = write_forward_run(
+            report_root=report_root,
+            prepared=prepared,
+            signals=signals,
+            trades=trades,
+            baseline_trades=baseline_trades,
+            portfolio_trades=shadow_trades,
+            overflow_trades=overflow_ledger,
+            checkpoint_trades=checkpoint_ledger,
+            data_stale=_data_stale(prepared, config),
+            risk_shadow_trades=risk_shadow_trades,
+            risk_shadow_skipped=risk_shadow_skipped,
+            token_context=token_attention_counterfactual,
+            observed_at=observed_at,
+        )
+        outputs.update({f"forward_{name}": path for name, path in forward_outputs.items()})
     return outputs
 
 
@@ -1943,8 +2072,8 @@ def write_v07d2_cic_mir1_paper_live(
     instruments: pd.DataFrame,
     base_config: ExperimentConfig,
     config: V07A2Config,
-    report_root: Path = REPORT_ROOT,
-    paper_data_root: Path = PAPER_DATA_ROOT,
+    report_root: Path = REPLAY_REPORT_ROOT,
+    paper_data_root: Path = REPLAY_DATA_ROOT,
     days: int | None = 30,
 ) -> dict[str, Path]:
     report_root = ensure_dir(report_root)
@@ -2076,6 +2205,8 @@ def write_v07d2_s2_paper_live(
 __all__ = [
     "OVERFLOW_PORTFOLIO_ID",
     "PAPER_DATA_ROOT",
+    "REPLAY_DATA_ROOT",
+    "REPLAY_REPORT_ROOT",
     "REPORT_ROOT",
     "S2_PAPER_LIVE_CANDIDATES",
     "S2_PAPER_LIVE_ROOT",

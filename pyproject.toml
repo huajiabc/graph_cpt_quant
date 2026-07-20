@@ -17,12 +17,17 @@ dependencies = [
   "PyYAML>=6.0",
   "matplotlib>=3.7",
   "seaborn>=0.12",
+  "websockets>=12,<16",
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",
   "ruff>=0.4",
+]
+ml = [
+  "scikit-learn>=1.4,<2",
+  "xgboost>=3,<4",
 ]
 
 [project.scripts]
@@ -38,3 +43,6 @@ target-version = "py310"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+  "slow: integration or parity tests that intentionally process larger fixtures",
+]

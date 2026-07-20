@@ -1,0 +1,39 @@
+# Paper-forward role promotion only. This does not grant canary or real-live permission.
+promotion:
+  date: "2026-07-11"
+  decision: "promote_S0_to_primary_forward_paper"
+  from:
+    portfolio: "CIC1_FILTERED_MIR1_MAX3"
+    new_role: "reference_ledger"
+  to:
+    portfolio: "P2_MAX8_BASELINE"
+    label: "P2 CIC1+CIC2 max8"
+    new_role: "primary_forward_paper"
+    max_positions: 8
+
+permissions:
+  paper_forward_allowed: true
+  shadow_logging_allowed: true
+  canary_live_allowed: false
+  real_live_allowed: false
+
+evidence_status:
+  alpha_proven: false
+  forward_sample_status: "insufficient"
+  execution_realism_ready: false
+  risk_envelope_ready: false
+
+decision_gates:
+  core_initial_trades: 100
+  core_stronger_review_trades: 200
+  demote_if_core_trades_gte: 100
+  demote_if_net20_lte: 0.0
+  require_net30_positive: true
+  require_month_cap35_net20_positive: true
+  require_cost_stress_30bp: true
+
+references:
+  executable_config: "configs/v0_7d2_cic_mir1_paper_live.yaml"
+  cumulative_ledger: "reports/v0_7d2_cic_mir1_paper_live/forward/primary_forward_trades.parquet"
+  actionable_entries: "reports/v0_7d2_cic_mir1_paper_live/forward/actionable_entries.parquet"
+  live_gate_status: "reports/v0_7d2_cic_mir1_paper_live/forward/live_gate_status.json"

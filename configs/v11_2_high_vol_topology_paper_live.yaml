@@ -1,0 +1,119 @@
+experiment:
+  name: v11_2_high_vol_topology_paper_live
+  mode: paper_live_shadow_only
+  paper_live_allowed: true
+  real_orders_allowed: false
+
+data:
+  live_root: data/live_v112_topology
+  history_days: 45
+  interval: 15m
+  base_config: configs/v0_3.yaml
+  seed_base_events: reports/v11_1_sparse_topology_continuation/base_topology_events.parquet
+
+graph:
+  lookback_days: 30
+  min_samples: 500
+  community_count: 8
+  expected_community_size: 9
+  coherence_hours: 12
+  rank_hours: 4
+  break_quantile: 0.05
+  cooldown_hours: 4
+
+signal:
+  severity_quantile: 0.80
+  min_prior_events: 100
+  volatility_hours: 24
+  volatility_quantile: 0.75
+  max_communities: 3
+
+forward:
+  horizon_hours: 4
+  round_trip_cost_bps: 20
+  timely_lag_minutes: 60
+  stale_after_minutes: 45
+  report_root: reports/v11_2_high_vol_topology_paper_live
+
+universe:
+  fallback_policy: trailing_30d_turnover_desc
+  fallback_candidates:
+    - JTOUSDT
+    - RENDERUSDT
+    - DASHUSDT
+    - FIDAUSDT
+    - BUSDT
+  symbols:
+    - BTCUSDT
+    - 1000BONKUSDT
+    - 1000PEPEUSDT
+    - AAVEUSDT
+    - ADAUSDT
+    - APTUSDT
+    - ARBUSDT
+    - AVAXUSDT
+    - AXSUSDT
+    - BCHUSDT
+    - BIOUSDT
+    - BNBUSDT
+    - BRETTUSDT
+    - CRVUSDT
+    - DOGEUSDT
+    - DOTUSDT
+    - DRIFTUSDT
+    - EIGENUSDT
+    - ENAUSDT
+    - ETCUSDT
+    - ETHFIUSDT
+    - ETHUSDT
+    - FARTCOINUSDT
+    - FILUSDT
+    - FLOWUSDT
+    - GALAUSDT
+    - HBARUSDT
+    - HYPEUSDT
+    - ICPUSDT
+    - INJUSDT
+    - JUPUSDT
+    - LDOUSDT
+    - LINKUSDT
+    - LTCUSDT
+    - MAGICUSDT
+    - MERLUSDT
+    - MNTUSDT
+    - NEARUSDT
+    - NMRUSDT
+    - ONDOUSDT
+    - ONTUSDT
+    - OPUSDT
+    - ORDIUSDT
+    - PAXGUSDT
+    - PENGUUSDT
+    - PIPPINUSDT
+    - POLUSDT
+    - POPCATUSDT
+    - PYTHUSDT
+    - SEIUSDT
+    - SHIB1000USDT
+    - SIRENUSDT
+    - SOLUSDT
+    - STRKUSDT
+    - SUIUSDT
+    - TAOUSDT
+    - TIAUSDT
+    - TONUSDT
+    - TRUMPUSDT
+    - TRXUSDT
+    - TWTUSDT
+    - UNIUSDT
+    - VIRTUALUSDT
+    - VVVUSDT
+    - WIFUSDT
+    - WLDUSDT
+    - XAUTUSDT
+    - XLMUSDT
+    - XMRUSDT
+    - XRPUSDT
+    - ZECUSDT
+    - ZENUSDT
+    - ZROUSDT

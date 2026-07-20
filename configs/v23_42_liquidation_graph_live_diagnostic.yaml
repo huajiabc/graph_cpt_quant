@@ -1,0 +1,34 @@
+factor:
+  id: LIQUIDATION_GRAPH_BUCKET_VOLATILITY_STATE
+  version: v23.42
+  status: LIVE_DIAGNOSTIC
+  role: graph_level_volatility_state
+
+application:
+  scope: live_shadow
+  enabled: true
+  push_policy: record_only
+  runner: liquidation_graph_forward_once
+  real_orders_allowed: false
+  leverage_allowed: false
+
+data:
+  live_root: data/live_liquidation_graph
+  source_root: data/live_liquidation_graph/okx
+  contract_root: reports/v23_42_liquidation_graph_live_diagnostic/remote_contract
+  report_root: reports/v23_42_liquidation_graph_live_diagnostic
+  ledger_path: data/live_liquidation_graph/hourly_graph_feature_ledger.parquet
+  collection_interval_minutes: 15
+
+contract:
+  feature_windows_minutes: [5, 15, 60]
+  minimum_hourly_decisions: 336
+  minimum_utc_days: 14
+  outcomes_loaded: false
+  remote_causal_start_rule: first_successful_remote_batch_completion
+
+permissions:
+  strategy_promotion: false
+  paper_live_strategy: false
+  real_orders_allowed: false
+  leverage_allowed: false

@@ -1,0 +1,17 @@
+# v18.9 High-Breadth Unwind Cascade Findings
+
+Verdict: `reject_high_breadth_unwind_cascade`.
+
+| candidate                                     |   events |   mean_gross_bp |   mean_primary_net_bp |   mean_stress_net_bp |   bootstrap_95_low_bp |   bootstrap_95_high_bp |   random_percentile |   reversed_primary_net_bp |   delayed_primary_net_bp |   complement_primary_net_bp |   positive_profit_concentration | eligible   | failed_gates                                                                                                                                                                                                                                                                 | verdict                            |
+|:----------------------------------------------|---------:|----------------:|----------------------:|---------------------:|----------------------:|-----------------------:|--------------------:|--------------------------:|-------------------------:|----------------------------:|--------------------------------:|:-----------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------------------------|
+| VBR1_HIGH_BREADTH_UNWIND_CASCADE_CONTINUATION |      275 |         -1.0481 |              -11.0481 |             -16.0481 |              -15.5821 |                -5.6707 |              0.6000 |                   -8.9519 |                 -12.4324 |                    -13.7855 |                          1.0000 | False      | development_primary_positive|validation_primary_positive|holdout_primary_positive|full_stress_positive|bootstrap_lower_positive|random_percentile_95|beats_reversed_direction|source_q90_positive|holding_30m_positive|holding_60m_positive|positive_profit_concentration_35 | reject_high_breadth_unwind_cascade |
+
+| candidate                                     | scope       |   events |   active_days |   active_months |   mean_breadth |   mean_gross_bp |   mean_primary_net_bp |   mean_stress_net_bp |   win_rate_primary |
+|:----------------------------------------------|:------------|---------:|--------------:|----------------:|---------------:|----------------:|----------------------:|---------------------:|-------------------:|
+| VBR1_HIGH_BREADTH_UNWIND_CASCADE_CONTINUATION | all         |      275 |           167 |              11 |         0.6182 |         -1.0481 |              -11.0481 |             -16.0481 |             0.2618 |
+| VBR1_HIGH_BREADTH_UNWIND_CASCADE_CONTINUATION | development |      139 |            81 |               5 |         0.5690 |         -3.4164 |              -13.4164 |             -18.4164 |             0.2518 |
+| VBR1_HIGH_BREADTH_UNWIND_CASCADE_CONTINUATION | validation  |       51 |            31 |               2 |         0.6641 |          8.1345 |               -1.8655 |              -6.8655 |             0.3529 |
+| VBR1_HIGH_BREADTH_UNWIND_CASCADE_CONTINUATION | holdout     |       85 |            55 |               4 |         0.6711 |         -2.6846 |              -12.6846 |             -17.6846 |             0.2235 |
+
+The low-breadth candidate remained cancelled for inadequate coverage.
+No live, PaperLive, application, leverage, remote, or order scope changed.

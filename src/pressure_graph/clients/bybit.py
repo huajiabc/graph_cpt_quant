@@ -21,6 +21,15 @@ INTERVAL_TO_OI = {
     "4h": "4h",
 }
 
+INTERVAL_TO_ACCOUNT_RATIO = {
+    "5m": "5min",
+    "15m": "15min",
+    "30m": "30min",
+    "1h": "1h",
+    "4h": "4h",
+    "1d": "1d",
+}
+
 
 def to_ms(ts: datetime | pd.Timestamp) -> int:
     return int(pd.Timestamp(ts).tz_convert("UTC").timestamp() * 1000)
@@ -200,6 +209,61 @@ class BybitClient(RestClient):
         df["oi_time"] = pd.to_datetime(pd.to_numeric(df["timestamp"]), unit="ms", utc=True)
         df["oi_base"] = pd.to_numeric(df["openInterest"], errors="coerce")
         return df[["exchange", "symbol", "oi_time", "oi_base"]].sort_values("oi_time")
+
+    def account_ratio(
+        self,
+        symbol: str,
+        start: datetime | pd.Timestamp,
+        end: datetime | pd.Timestamp,
+        interval: str = "1h",
+    ) -> pd.DataFrame:
+        """Return Bybit long/short account ratios with cursor-safe pagination."""
+        if interval not in INTERVAL_TO_ACCOUNT_RATIO:
+            raise ValueError(f"unsupported account-ratio interval: {interval}")
+        rows: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while True:
+            params: dict[str, Any] = {
+                "category": self.category,
+                "symbol": symbol,
+                "period": INTERVAL_TO_ACCOUNT_RATIO[interval],
+                "startTime": to_ms(pd.Timestamp(start).tz_convert("UTC")),
+                "endTime": to_ms(pd.Timestamp(end).tz_convert("UTC")),
+                "limit": 500,
+            }
+            if cursor:
+                params["cursor"] = cursor
+            payload = self.get_json("/v5/market/account-ratio", params)
+            result = payload["result"]
+            rows.extend(result.get("list", []))
+            next_cursor = result.get("nextPageCursor") or None
+            if not next_cursor or next_cursor == cursor:
+                break
+            cursor = next_cursor
+        df = pd.DataFrame(rows)
+        if df.empty:
+            return df
+        df["exchange"] = self.exchange
+        df["symbol"] = symbol
+        df["account_ratio_time"] = pd.to_datetime(
+            pd.to_numeric(df["timestamp"], errors="coerce"), unit="ms", utc=True
+        )
+        df["long_account_ratio"] = pd.to_numeric(df["buyRatio"], errors="coerce")
+        df["short_account_ratio"] = pd.to_numeric(df["sellRatio"], errors="coerce")
+        return (
+            df[
+                [
+                    "exchange",
+                    "symbol",
+                    "account_ratio_time",
+                    "long_account_ratio",
+                    "short_account_ratio",
+                ]
+            ]
+            .dropna(subset=["account_ratio_time"])
+            .drop_duplicates(["symbol", "account_ratio_time"], keep="last")
+            .sort_values("account_ratio_time")
+        )
 
     def recent_trades(self, symbol: str, limit: int = 1000) -> pd.DataFrame:
         payload = self.get_json(

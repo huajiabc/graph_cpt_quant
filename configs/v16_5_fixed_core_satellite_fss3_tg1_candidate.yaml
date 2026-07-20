@@ -1,0 +1,118 @@
+strategy:
+  id: CM2_FIXED_80_FSS3_20_TG1
+  version: v16.5
+  layer: portfolio_construction
+  status: LIVE_RECORD_ONLY
+  decision_time: Monday 00:00 UTC
+  holding_days: 7
+  gross_notional: 1.0
+
+construction:
+  allocation_rule: fixed_capital_sleeves
+  rebalance_rule: no_dynamic_allocation
+  fss3_weight: 0.80
+  tg1_weight: 0.20
+  leverage: 1.0
+  cross_sleeve_netting_claimed: false
+  additional_allocation_turnover_cost: false
+  cost_note: >-
+    Each sleeve return already contains its complete realized position-transition
+    cost. Fixed capital scaling linearly scales those costs; no cross-sleeve
+    execution netting or cost benefit is claimed.
+
+parent_sleeves:
+  fss3:
+    id: FSS3_CURRENT_SIGN_070_TURNOVER_CAP
+    version: v14.9
+    role: core
+    weight: 0.80
+    config: configs/v14_9_fss3_funding_sign_turnover_cap_candidate.yaml
+    weekly_portfolio: reports/v14_9_funding_sign_turnover_cap/weekly_portfolio.parquet
+    independent_audit: reports/v14_9_funding_sign_turnover_cap/independent_audit.json
+  tg1:
+    id: TG1_FORWARD_EXTENDED_TO_2026_07
+    version: v13.2
+    role: diversification_satellite
+    weight: 0.20
+    weekly_portfolio: reports/v13_2_tg1_forward_temporal_extension/weekly_portfolio.parquet
+    definition: docs/v132_tg1_forward_temporal_extension_prereg_2026_07_15.md
+    standalone_verdict: reject_as_tradable_alpha
+    standalone_limitation: positive_month_concentration_above_35_percent
+
+data:
+  fss3_venue: Bybit linear perpetual
+  tg1_venues: Bybit linear perpetual long and Binance USD-M perpetual short
+  membership: reports/v13_2_tg1_forward_temporal_extension/monthly_balanced_membership_extended.csv
+  latest_research_entry: 2026-07-06T00:00:00Z
+  latest_research_exit: 2026-07-13T00:00:00Z
+  calendar_alignment: exact_entry_exit_period_and_month
+
+costs:
+  primary_one_way_bps: 20
+  stress_one_way_bps: 40
+  treatment: inherited_inside_each_scaled_sleeve_return
+
+evidence:
+  weeks: 49
+  months: 12
+  sleeve_correlation: -0.06918
+  primary_net_bp_per_week: 78.9766
+  stress_net_bp_per_week: 67.0112
+  development_net_bp_per_week: 138.6848
+  validation_net_bp_per_week: 4.9307
+  holdout_net_bp_per_week: 53.9063
+  validation_stress_net_bp_per_week: -6.3227
+  bootstrap_95_low_bp: 28.1250
+  alternate_bootstrap_95_low_bp: 27.2826
+  minimum_leave_one_month_out_mean_bp: 64.0297
+  positive_month_concentration: 0.2313
+  mean_retention_vs_fss3: 0.838656
+  drawdown_reduction_vs_fss3: 0.253515
+  downside_semideviation_reduction_vs_fss3: 0.224076
+  worst_week_bp: -277.1132
+
+independent_audit:
+  version: v16.6
+  artifact: reports/v16_5_fixed_core_satellite_fss3_tg1/independent_audit/audit_outcome.csv
+  formula_passed: true
+  risk_passed: true
+  maximum_recalculation_difference: 0.0
+  caveat: validation_stress_return_is_negative
+
+permissions:
+  research_candidate_allowed: true
+  forward_shadow_candidate_allowed: true
+  forward_shadow_recording_implemented: true
+  forward_shadow_config: configs/v16_5_cm2_forward_shadow.yaml
+  forward_shadow_scope: live_shadow
+  forward_shadow_enabled: true
+  forward_shadow_push_policy: record_only
+  paper_live_deployed: false
+  paper_live_allowed_by_this_file: false
+  remote_change_allowed_by_this_file: false
+  leverage_allowed: false
+  real_orders_allowed: false
+
+next_gates:
+  require_exact_forward_implementations_for_both_sleeves: true
+  require_fail_closed_data_and_state_audit: true
+  minimum_natural_forward_weeks_before_review: 12
+  require_positive_forward_primary_mean: true
+  require_positive_forward_stress_mean: true
+  require_relative_risk_review_against_fss3: true
+  require_fresh_independent_audit: true
+  require_explicit_remote_deployment_request: true
+  require_separate_leverage_preregistration: true
+
+governance:
+  previous_status: CANDIDATE_WATCH
+  transition_path:
+    - CANDIDATE_WATCH
+    - FROZEN_CORE
+    - LIVE_RECORD_ONLY
+  transition_reason: >-
+    The v16.5 promotion gates and v16.6 independent formula/risk audit passed,
+    the exact 80/20 construction is frozen, and the user explicitly requested
+    remote record-only forward observation. This does not promote TG1 as a
+    standalone strategy and does not authorize orders.
+  tg1_standalone_status: REFERENCE_ONLY

@@ -1,0 +1,62 @@
+strategy:
+  id: NF8_ALL_NEGATIVE_EQUAL_BTC_BETA_NEUTRAL
+  version: v14.0
+  status: frozen_forward_shadow_candidate
+  decision_time: Monday 00:00 UTC
+  holding_days: 7
+  gross_notional: 1.0
+
+data:
+  venue: Bybit linear perpetual
+  price_interval: 1h closed bars
+  funding_source: settled funding history
+  membership: reports/v13_2_tg1_forward_temporal_extension/monthly_balanced_membership_extended.csv
+  beta_lookback_days: 30
+  funding_lookback_days: 7
+
+signal:
+  eligible_rule: prior_7d_settled_funding_sum_lt_0
+  minimum_names: 4
+  ranking: none
+  hold_band: none
+
+portfolio:
+  coin_prehedge_weighting: equal
+  selected_btc_beta: prior_month_equal_weight_mean
+  coin_total_weight: 1/(1+selected_btc_beta)
+  btc_short_weight: selected_btc_beta/(1+selected_btc_beta)
+  estimated_btc_beta_target: 0.0
+
+costs:
+  primary_one_way_bps: 20
+  stress_one_way_bps: 40
+  turnover: exact_signed_weight_l1
+  charge_initial_entry: true
+  charge_terminal_close_in_research: true
+
+evidence:
+  weeks: 49
+  months: 12
+  primary_net_bp_per_week: 102.2895
+  stress_net_bp_per_week: 93.2197
+  validation_net_bp_per_week: 28.5328
+  holdout_net_bp_per_week: 93.9085
+  bootstrap_95_low_bp: 38.3710
+  full_universe_null_percentile: 99.9
+  positive_month_concentration: 0.282824
+  mean_turnover: 0.453492
+  independent_audit: reports/v14_0_equal_weight_negative_funding_state/audit.json
+
+permissions:
+  research_candidate_allowed: true
+  forward_shadow_candidate_allowed: true
+  paper_live_deployed: false
+  paper_live_allowed_by_this_file: false
+  leverage_allowed: false
+  real_orders_allowed: false
+
+next_gates:
+  require_natural_forward_weeks_before_paperlive: true
+  require_execution_implementation_audit: true
+  require_remote_deployment_request: true
+  require_separate_leverage_preregistration: true

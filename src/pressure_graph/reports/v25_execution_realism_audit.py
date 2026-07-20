@@ -272,7 +272,12 @@ def _notes(root: Path, cost: pd.DataFrame, assumptions: pd.DataFrame) -> None:
 def write_v25_execution_realism_audit(cfg: V25Config = V25Config()) -> dict[str, Path]:
     root = ensure_dir(cfg.report_root)
     stack = _read_csv(cfg.v24_root / "stack_comparison.csv")
-    checkpoint = _read_parquet(cfg.source_root / "checkpoint_trade_ledger.parquet")
+    forward_checkpoint = cfg.source_root / "forward" / "checkpoint_trades.parquet"
+    checkpoint = _read_parquet(
+        forward_checkpoint if forward_checkpoint.exists() else cfg.source_root / "checkpoint_trade_ledger.parquet"
+    )
+    if forward_checkpoint.exists() and "timely_forward_observation" in checkpoint.columns:
+        checkpoint = checkpoint[checkpoint["timely_forward_observation"].fillna(False).astype(bool)].copy()
     cost = _cost_stress(stack)
     ledger = _execution_ledger_quality(checkpoint)
     assumptions = _execution_assumption_check(stack, checkpoint)

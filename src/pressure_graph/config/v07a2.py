@@ -108,6 +108,15 @@ class V07A2Stops:
 
 
 @dataclass(frozen=True)
+class V07A2ForwardPrimary:
+    portfolio_id: str
+    label: str
+    max_positions: int
+    role: str
+    reference_candidate: str
+
+
+@dataclass(frozen=True)
 class V07A2Config:
     experiment: V07A2Experiment
     exchange: V07A2Exchange
@@ -119,6 +128,7 @@ class V07A2Config:
     portfolio: V07A2Portfolio
     logging: V07A2Logging
     stops: V07A2Stops
+    forward_primary: V07A2ForwardPrimary
 
 
 def _section(payload: dict, name: str) -> dict:
@@ -132,6 +142,7 @@ def load_v07a2_config(path: str | Path = "configs/v0_7a2_mir1_paper_live.yaml") 
     baselines = _section(payload, "baselines")
     portfolio = _section(payload, "portfolio")
     stops = _section(payload, "stops")
+    forward_primary = _section(payload, "forward_primary")
     return V07A2Config(
         experiment=V07A2Experiment(**_section(payload, "experiment")),
         exchange=V07A2Exchange(**_section(payload, "exchange")),
@@ -167,5 +178,14 @@ def load_v07a2_config(path: str | Path = "configs/v0_7a2_mir1_paper_live.yaml") 
                 stops.get("pause_if_rolling_10bp_net_lte_zero", True)
             ),
             pause_if_baseline_lift_lte_zero=bool(stops.get("pause_if_baseline_lift_lte_zero", True)),
+        ),
+        forward_primary=V07A2ForwardPrimary(
+            portfolio_id=str(forward_primary.get("portfolio_id", "P2_MAX8_BASELINE")),
+            label=str(forward_primary.get("label", "P2 CIC1+CIC2 max8")),
+            max_positions=int(forward_primary.get("max_positions", 8)),
+            role=str(forward_primary.get("role", "primary_forward_paper")),
+            reference_candidate=str(
+                forward_primary.get("reference_candidate", _section(payload, "experiment").get("primary_candidate", ""))
+            ),
         ),
     )

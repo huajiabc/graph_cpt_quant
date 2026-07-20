@@ -32,6 +32,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from http.client import IncompleteRead
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -166,7 +167,7 @@ def download_aggtrades_day(
                 return None
             if attempt == TRANSIENT_DOWNLOAD_ATTEMPTS - 1:
                 raise
-        except (URLError, TimeoutError, OSError):
+        except (IncompleteRead, URLError, TimeoutError, OSError):
             if attempt == TRANSIENT_DOWNLOAD_ATTEMPTS - 1:
                 raise
         time.sleep(TRANSIENT_RETRY_SLEEP_SECONDS * (2**attempt))
